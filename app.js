@@ -28,10 +28,15 @@
       mediaOverrides: {},
       drafts: {},
       reports: {},
+      contributions: [],
+      materialUses: {},
+      materialRatings: {},
     };
   }
 
   let state = blank();
+  let libraryNotice = "";
+  let materialSerial = 0;
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -146,6 +151,11 @@ function levelLabel(n) {
   function meanFloor(personRecord) {
     const total = A.floorIds.reduce((sum, id) => sum + (levelOf(personRecord.id, id) ?? 0), 0);
     return total / A.floorIds.length;
+  }
+
+  function formatMean(n) {
+    const rounded = Math.round(n * 100) / 100;
+    return String(rounded);
   }
 
   function floorMet(personRecord) {
@@ -471,6 +481,9 @@ function levelLabel(n) {
       mediaOverrides: state.mediaOverrides,
       drafts: state.drafts,
       reports: state.reports,
+      contributions: state.contributions,
+      materialUses: state.materialUses,
+      materialRatings: state.materialRatings,
     };
     try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch (err) { /* private mode */ }
   }
@@ -502,6 +515,93 @@ function levelLabel(n) {
     if (!state.mediaOverrides || typeof state.mediaOverrides !== "object") state.mediaOverrides = {};
     if (!state.drafts || typeof state.drafts !== "object") state.drafts = {};
     if (!state.reports || typeof state.reports !== "object") state.reports = {};
+    if (!Array.isArray(state.contributions)) state.contributions = [];
+    const seenIds = new Set();
+    state.contributions = state.contributions.map(cleanContribution).filter((item) => {
+      if (!item || seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+    state.materialUses = cleanUseMap(state.materialUses);
+    state.materialRatings = cleanRatingMap(state.materialRatings);
+  }
+
+  function cleanContributor(value) {
+    if (!value || typeof value !== "object") return null;
+    if (value.kind === "student" && student(value.id)) return { kind: "student", id: value.id };
+    if (value.kind === "mentor" && person(value.id)) return { kind: "mentor", id: value.id };
+    if (value.kind === "director" && person(value.id)) return { kind: "director", id: value.id };
+    if (value.kind === "external") {
+      const name = String(value.name || "").trim().slice(0, 80);
+      if (!name) return null;
+      const place = String(value.place || "").trim().slice(0, 80);
+      return place ? { kind: "external", name, place } : { kind: "external", name };
+    }
+    return null;
+  }
+
+  function cleanContribution(item) {
+    if (!item || typeof item !== "object") return null;
+    const id = typeof item.id === "string" ? item.id : "";
+    if (!/^mat-[a-z0-9-]+$/.test(id)) return null;
+    if (A.materials.some((row) => row.id === id)) return null;
+    const title = String(item.title || "").trim().slice(0, 140);
+    const summary = String(item.summary || "").trim().slice(0, 600);
+    if (!title || !summary) return null;
+    if (!A.media.some((row) => row.id === item.medium)) return null;
+    const fields = [];
+    const sourceFields = Array.isArray(item.fields) ? item.fields : [];
+    for (const fieldId of sourceFields) {
+      if (field(fieldId) && !fields.includes(fieldId)) fields.push(fieldId);
+    }
+    if (!fields.length) return null;
+    const competencies = [];
+    const sourceClaims = Array.isArray(item.competencies) ? item.competencies : [];
+    for (const claimId of sourceClaims) {
+      if (competency(claimId) && !competencies.includes(claimId)) competencies.push(claimId);
+    }
+    const minutes = Math.round(Number(item.minutes));
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 240) return null;
+    const contributor = cleanContributor(item.contributor);
+    if (!contributor) return null;
+    const brought = typeof item.brought === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.brought) ? item.brought : A.today;
+    return { id, title, summary, medium: item.medium, minutes, fields, competencies, contributor, brought };
+  }
+
+  function knownMaterialId(id) {
+    if (A.materials.some((item) => item.id === id)) return true;
+    return state.contributions.some((item) => item.id === id);
+  }
+
+  function cleanUseMap(value) {
+    const out = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+    for (const [id, list] of Object.entries(value)) {
+      if (!knownMaterialId(id) || !Array.isArray(list)) continue;
+      const ids = [];
+      for (const studentId of list) {
+        if (typeof studentId === "string" && student(studentId) && !ids.includes(studentId)) ids.push(studentId);
+      }
+      if (ids.length) out[id] = ids;
+    }
+    return out;
+  }
+
+  function cleanRatingMap(value) {
+    const out = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+    for (const [id, list] of Object.entries(value)) {
+      if (!knownMaterialId(id) || !Array.isArray(list)) continue;
+      const byStudent = new Map();
+      for (const row of list) {
+        if (!row || !student(row.studentId)) continue;
+        const score = Number(row.score);
+        if (!Number.isInteger(score) || score < 1 || score > 4) continue;
+        byStudent.set(row.studentId, score);
+      }
+      if (byStudent.size) out[id] = Array.from(byStudent, ([studentId, score]) => ({ studentId, score }));
+    }
+    return out;
   }
 
   function readRoute() {
@@ -596,6 +696,45 @@ function levelLabel(n) {
     }
     const ids = A.evidence.map((item) => item.id);
     expect(new Set(ids).size === ids.length, "unique evidence ids");
+    expect(!!A.materialActivity, "material activity present");
+    const spanCount = A.materials.filter((item) => Array.isArray(item.fields) && item.fields.length > 1).length;
+    expect(spanCount >= 3, "materials span fields");
+    expect(A.materials.some((item) => item.contributor && item.contributor.kind === "student"), "student material");
+    expect(A.materials.some((item) => item.contributor && item.contributor.kind === "mentor"), "professor material");
+    expect(A.materials.some((item) => item.contributor && item.contributor.kind === "external" && item.contributor.name), "external material");
+    for (const item of A.materials) {
+      expect(A.media.some((row) => row.id === item.medium), "material medium " + item.id);
+      expect(item.minutes > 0, "material minutes " + item.id);
+      const declared = Array.isArray(item.fields) && item.fields.length ? item.fields : (item.field ? [item.field] : []);
+      expect(declared.length > 0, "material fields " + item.id);
+      for (const id of declared) expect(!!field(id), "material field " + item.id + " " + id);
+      expect(Array.isArray(item.competencies), "material claims " + item.id);
+      for (const id of item.competencies || []) expect(!!competency(id), "material claim " + item.id + " " + id);
+      const owner = item.contributor && item.contributor.kind === "student" ? item.contributor.id : "";
+      if (owner) expect(!!student(owner), "contributor " + item.id);
+      if (item.contributor && (item.contributor.kind === "mentor" || item.contributor.kind === "director")) {
+        expect(!!person(item.contributor.id), "contributor " + item.id);
+      }
+      for (const studentId of item.uses || []) {
+        expect(!!student(studentId), "material use " + item.id);
+        expect(studentId !== owner, "self use " + item.id);
+      }
+      for (const rating of item.ratings || []) {
+        expect(!!student(rating.studentId), "material rating " + item.id);
+        expect(rating.score >= 1 && rating.score <= 4, "material rating range " + item.id);
+        expect((item.uses || []).includes(rating.studentId), "rater used " + item.id);
+        expect(rating.studentId !== owner, "self rate " + item.id);
+      }
+    }
+    for (const [id, row] of Object.entries(A.materialActivity)) {
+      const item = byId(A.materials, id);
+      expect(!!item && !item.contributor, "activity is house " + id);
+      for (const studentId of row.uses) expect(!!student(studentId), "activity use " + id);
+      for (const rating of row.ratings) {
+        expect(!!student(rating.studentId) && row.uses.includes(rating.studentId), "activity rater " + id);
+        expect(rating.score >= 1 && rating.score <= 4, "activity score " + id);
+      }
+    }
     return problems;
   }
 
@@ -1066,7 +1205,7 @@ function levelLabel(n) {
         <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. A mark is worth 1, 2, 3, or 4 points, matching the stage, and an action shows the most it can place. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage.</p>
       </div>
       <h3 class="section-title">Decisions already in force</h3>
-      <div class="grid-3">${decisions}</div>
+      <div class="grid-2">${decisions}</div>
       <h3 class="section-title">Five layers, from the field to the panel</h3>
       <div class="layers">${layers}</div>
       <h3 class="section-title">Open the atelier</h3>
@@ -1088,7 +1227,7 @@ function levelLabel(n) {
         const elicited = []
           .concat(A.projects.filter((row) => row.elicits.includes(claim.id)).map((row) => row.name))
           .concat(A.workshops.filter((row) => row.elicits.includes(claim.id)).map((row) => row.name));
-        const practice = A.materials.filter((row) => row.competencies.includes(claim.id)).map((row) => row.title);
+        const practice = allMaterials().filter((row) => (row.competencies || []).includes(claim.id)).map((row) => row.title);
         const related = neighbors(claim.id).map((id) => competency(id).short).join(", ");
         return `<article class="card map-card field-${item.id} ${state.competencyId === claim.id ? "is-selected" : ""}">
           <p class="eyebrow">${esc(item.name)}</p>
@@ -1234,12 +1373,319 @@ function levelLabel(n) {
     </article>`;
   }
 
+  /* Shelf order is how many other students used the piece, then the mean quality score.
+     The contributor's own use and score never count. One use per student.
+     The same rule covers every kind of material. */
+  function materialFields(item) {
+    const ids = [];
+    const declared = Array.isArray(item.fields) && item.fields.length ? item.fields : (item.field ? [item.field] : []);
+    for (const id of declared) {
+      if (field(id) && !ids.includes(id)) ids.push(id);
+    }
+    for (const claimId of item.competencies || []) {
+      const claim = competency(claimId);
+      if (claim && !ids.includes(claim.field)) ids.push(claim.field);
+    }
+    return ids;
+  }
+
+  function allMaterials() {
+    return A.materials.concat(state.contributions || []);
+  }
+
+  function materialById(id) {
+    return allMaterials().find((item) => item.id === id) || null;
+  }
+
+  function contributorStudentId(item) {
+    if (item.contributor && item.contributor.kind === "student") return item.contributor.id;
+    return "";
+  }
+
+  function contributorBucket(item) {
+    const kind = item.contributor && item.contributor.kind;
+    if (kind === "student") return "student";
+    if (kind === "mentor" || kind === "director") return "professor";
+    if (kind === "external") return "outside";
+    return "atelier";
+  }
+
+  function seedActivity(item) {
+    const extra = (A.materialActivity && A.materialActivity[item.id]) || {};
+    return {
+      uses: []
+        .concat(Array.isArray(item.uses) ? item.uses : [])
+        .concat(Array.isArray(extra.uses) ? extra.uses : []),
+      ratings: []
+        .concat(Array.isArray(item.ratings) ? item.ratings : [])
+        .concat(Array.isArray(extra.ratings) ? extra.ratings : []),
+    };
+  }
+
+  function ratingsOf(item) {
+    const owner = contributorStudentId(item);
+    const seed = seedActivity(item).ratings;
+    const extra = (state.materialRatings && state.materialRatings[item.id]) || [];
+    const byStudent = new Map();
+    for (const row of seed.concat(extra)) {
+      if (!row || !student(row.studentId) || row.studentId === owner) continue;
+      const score = Number(row.score);
+      if (!Number.isInteger(score) || score < 1 || score > 4) continue;
+      byStudent.set(row.studentId, score);
+    }
+    return Array.from(byStudent, ([studentId, score]) => ({ studentId, score }));
+  }
+
+  function usesOf(item) {
+    const owner = contributorStudentId(item);
+    const seed = seedActivity(item).uses;
+    const extra = (state.materialUses && state.materialUses[item.id]) || [];
+    const ids = seed.concat(extra, ratingsOf(item).map((row) => row.studentId));
+    const seen = new Set();
+    const found = [];
+    for (const id of ids) {
+      if (!student(id) || id === owner || seen.has(id)) continue;
+      seen.add(id);
+      found.push(id);
+    }
+    return found;
+  }
+
+  function meanScore(item) {
+    const ratings = ratingsOf(item);
+    if (!ratings.length) return -1;
+    return ratings.reduce((sum, row) => sum + row.score, 0) / ratings.length;
+  }
+
+  function joinNames(names) {
+    if (names.length <= 1) return names.join("");
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+  }
+
+  function broughtBy(item) {
+    const contributor = item.contributor;
+    if (!contributor || contributor.kind === "atelier") return "Atelier shelf";
+    if (contributor.kind === "student") {
+      const personRecord = student(contributor.id);
+      return personRecord ? `Brought by ${personRecord.name}, a student` : "Brought by a student";
+    }
+    if (contributor.kind === "mentor" || contributor.kind === "director") {
+      const record = person(contributor.id);
+      return record ? `Brought by ${record.name}, a professor` : "Brought by a professor";
+    }
+    if (contributor.kind === "external") {
+      const place = contributor.place ? ` (${contributor.place})` : "";
+      return `Brought by ${contributor.name}, from outside the atelier${place}`;
+    }
+    return "Atelier shelf";
+  }
+
+  function qualityWord(n) {
+    return ["", "Set aside", "Thin", "Sound", "Keep"][n] || String(n);
+  }
+
+  function qualitySentence(item) {
+    const users = usesOf(item)
+      .map((id) => student(id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!users.length) return "No other student has used this yet.";
+    const names = joinNames(users.map((personRecord) => firstName(personRecord)));
+    const used = users.length === 1
+      ? `Used by 1 other student (${names}).`
+      : `Used by ${users.length} other students (${names}).`;
+    const ratings = ratingsOf(item);
+    if (!ratings.length) return `${used} No quality score yet.`;
+    const mean = ratings.reduce((sum, row) => sum + row.score, 0) / ratings.length;
+    const scoreWord = ratings.length === 1 ? "score" : "scores";
+    let sentence = `${used} Quality ${formatMean(mean)} from ${ratings.length} ${scoreWord}.`;
+    if (ratings.length >= 2) {
+      if (mean >= 3) sentence += " The scores say to keep it.";
+      else if (mean < 2) sentence += " The scores say to set it aside.";
+      else sentence += " The scores are divided.";
+    }
+    return sentence;
+  }
+
+  function censusSentence(items) {
+    const buckets = { atelier: 0, student: 0, professor: 0, outside: 0 };
+    let used = 0;
+    for (const item of items) {
+      buckets[contributorBucket(item)] += 1;
+      if (usesOf(item).length) used += 1;
+    }
+    const waiting = items.length - used;
+    const piece = items.length === 1 ? "piece sits" : "pieces sit";
+    const usedSentence = used === 1
+      ? "1 has been used by another student."
+      : `${used} have been used by another student.`;
+    const waitSentence = waiting === 1 ? "1 is still waiting." : `${waiting} are still waiting.`;
+    return `${items.length} ${piece} on the shelf. ${usedSentence} ${waitSentence} ${buckets.atelier} came with the atelier, ${buckets.student} from students, ${buckets.professor} from professors, and ${buckets.outside} from outside. Counts cover the whole shelf.`;
+  }
+
+  function compareShelf(a, b) {
+    const usesA = usesOf(a).length;
+    const usesB = usesOf(b).length;
+    if (usesB !== usesA) return usesB - usesA;
+    const meanA = meanScore(a);
+    const meanB = meanScore(b);
+    if (meanB !== meanA) return meanB - meanA;
+    return a.title.localeCompare(b.title);
+  }
+
+  function compareWaiting(a, b) {
+    const da = a.brought || "";
+    const db = b.brought || "";
+    if (da !== db) return da < db ? 1 : -1;
+    return a.title.localeCompare(b.title);
+  }
+
+  function recordUse(materialId, studentId) {
+    const currentUses = state.materialUses && Array.isArray(state.materialUses[materialId])
+      ? state.materialUses[materialId].slice()
+      : [];
+    if (!currentUses.includes(studentId)) currentUses.push(studentId);
+    state.materialUses[materialId] = currentUses;
+  }
+
+  function recordRating(materialId, studentId, score) {
+    const currentRatings = state.materialRatings && Array.isArray(state.materialRatings[materialId])
+      ? state.materialRatings[materialId].filter((row) => row.studentId !== studentId)
+      : [];
+    currentRatings.push({ studentId, score });
+    state.materialRatings[materialId] = currentRatings;
+    recordUse(materialId, studentId);
+  }
+
+  function materialActions(item) {
+    if (state.role !== "student") {
+      return `<p class="muted">Students use this and score its quality. A professor does not set that score.</p>`;
+    }
+    if (contributorStudentId(item) === current().id) {
+      return `<p class="muted">You brought this. Other students use it and score its quality. You do not score your own piece.</p>`;
+    }
+    const used = usesOf(item).includes(current().id);
+    const mine = ratingsOf(item).find((row) => row.studentId === current().id);
+    const buttons = [1, 2, 3, 4].map((n) => {
+      const pressed = mine && mine.score === n;
+      return `<button type="button" data-action="rate-material" data-id="${esc(item.id)}" data-score="${n}" aria-pressed="${pressed ? "true" : "false"}">${n} ${esc(qualityWord(n))}</button>`;
+    }).join("");
+    return `<div class="action-row">
+        <button type="button" data-action="use-material" data-id="${esc(item.id)}" ${used ? "disabled" : ""}>${used ? "You used this" : "I used this"}</button>
+      </div>
+      <p class="eyebrow">Your quality score</p>
+      <div class="quality" role="group" aria-label="Quality score for ${esc(item.title)}">${buttons}</div>
+      <p class="muted">A quality score records that you used it. You can change your score. It does not add a mark.</p>`;
+  }
+
+  function materialCard(item) {
+    const fields = materialFields(item);
+    const ratings = ratingsOf(item);
+    const uses = usesOf(item);
+    const mean = ratings.length ? ratings.reduce((sum, row) => sum + row.score, 0) / ratings.length : null;
+    const fieldTags = fields.map((id) => `<li class="field-${id}">${esc(field(id).short)}</li>`).join("");
+    const claimTags = (item.competencies || []).map((id) => {
+      const claim = competency(id);
+      if (!claim) return "";
+      return `<li class="field-${claim.field}">${esc(claim.short)}</li>`;
+    }).join("");
+    const when = item.brought ? ` · ${formatDate(item.brought)}` : "";
+    const claimBlock = claimTags ? `<ul class="tags">${claimTags}</ul>` : "";
+    return `<article class="card material" id="${esc(item.id)}" data-uses="${uses.length}" data-marks="${ratings.length}" data-mean="${mean == null ? "" : esc(formatMean(mean))}" data-fields="${esc(fields.join(" "))}">
+      <p class="eyebrow">${esc(mediaLabel(item.medium))} · ${item.minutes} min</p>
+      <h3>${esc(item.title)}</h3>
+      <p class="meta">${esc(broughtBy(item) + when)}</p>
+      <ul class="tags">${fieldTags}</ul>
+      <p>${esc(item.summary)}</p>
+      ${claimBlock}
+      <p class="point-offer"><b>0 points</b> <span>practice</span></p>
+      <p class="quality-line">${esc(qualitySentence(item))}</p>
+      ${materialActions(item)}
+    </article>`;
+  }
+
+  function bringAs() {
+    if (state.role === "student") return `${current().name}, a student`;
+    if (state.role === "mentor") return `${person(state.mentorId).name}, a professor`;
+    return `${person("ortega").name}, a professor`;
+  }
+
+  function bringForm() {
+    const kindOptions = [`<option value="">Choose a kind</option>`]
+      .concat(A.media.map((item) => `<option value="${item.id}">${esc(item.label)}</option>`))
+      .join("");
+    const fieldChecks = A.fields.map((item) =>
+      `<label class="choice field-${item.id}"><input type="checkbox" name="bringField" value="${item.id}"> ${esc(item.name)}</label>`
+    ).join("");
+    const claimGroups = A.fields.map((item) => {
+      const boxes = A.competencies.filter((claim) => claim.field === item.id).map((claim) =>
+        `<label class="choice"><input type="checkbox" name="bringClaim" value="${claim.id}"> ${esc(claim.short)}</label>`
+      ).join("");
+      return `<p class="group-label field-${item.id}">${esc(item.short)}</p><div class="checks">${boxes}</div>`;
+    }).join("");
+    const noticed = libraryNotice ? materialById(libraryNotice) : null;
+    const notice = noticed
+      ? `<p class="live" id="library-notice">${esc(noticed.title)} is on the shelf.</p>`
+      : "";
+    return `${notice}<section class="card bring">
+      <p class="eyebrow">Add to the shelf</p>
+      <h3>Bring material</h3>
+      <p>File this as ${esc(bringAs())}. Every student can use it. It is worth 0 points and does not add a mark.</p>
+      <form class="stack-form" data-form="bring">
+        <label>Title
+          <input name="title" required maxlength="140">
+        </label>
+        <label>Summary
+          <textarea name="summary" required maxlength="600" placeholder="What another student can do with this."></textarea>
+        </label>
+        <label>Kind
+          <select name="bringMedium" required>${kindOptions}</select>
+        </label>
+        <label>Minutes
+          <input name="minutes" type="number" min="1" max="240" value="20" required>
+        </label>
+        <fieldset>
+          <legend>Fields it serves</legend>
+          <div class="checks">${fieldChecks}</div>
+          <p class="muted">Choose one or several. A subject you tick adds its field.</p>
+        </fieldset>
+        <details class="claims">
+          <summary>Subjects it practices</summary>
+          ${claimGroups}
+        </details>
+        <label class="check"><input type="checkbox" name="external"> Someone outside the atelier brought this</label>
+        <div id="external-fields" hidden>
+          <p class="muted">The card names this person. Students still set the quality score.</p>
+          <label>Their name
+            <input name="externalName" maxlength="80">
+          </label>
+          <label>Where they come from
+            <input name="place" maxlength="80">
+          </label>
+        </div>
+        <p class="form-error" data-error role="alert"></p>
+        <button type="submit" class="primary">Put it on the shelf</button>
+        <p class="muted">Students score a piece after they use it. The person who brought it does not score it. A professor does not set the quality score.</p>
+      </form>
+    </section>`;
+  }
+
+  function shelfBlock(title, lede, rows, empty) {
+    const cards = rows.map(materialCard).join("");
+    const body = cards || `<p class="empty">${esc(empty)}</p>`;
+    return `<section class="shelf-block">
+      <h3 class="section-title">${esc(title)}</h3>
+      <p class="muted">${esc(lede)}</p>
+      <div class="shelf">${body}</div>
+    </section>`;
+  }
+
   function materialMatches(item) {
     const mediumOk = state.medium === "all" || item.medium === state.medium;
     if (!mediumOk) return false;
     if (state.field === "all") return true;
-    if (item.field === state.field) return true;
-    return item.competencies.some((id) => competency(id).field === state.field);
+    if (materialFields(item).includes(state.field)) return true;
+    return (item.competencies || []).some((id) => competency(id) && competency(id).field === state.field);
   }
 
   function activityEvidence(personRecord, source, sourceId, skillId) {
@@ -1370,24 +1816,27 @@ function levelLabel(n) {
     const skillOptions = [`<option value="all"${state.skill === "all" ? " selected" : ""}>All skills</option>`]
       .concat(skillPool.map((item) => `<option value="${item.id}"${state.skill === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
       .join("");
-    const materials = A.materials.filter((item) => {
-      if (skillId) return item.competencies.includes(skillId);
+    const materials = allMaterials().filter((item) => {
+      const claims = item.competencies || [];
+      if (skillId) return claims.includes(skillId);
       if (state.field === "all") return true;
-      if (item.field === state.field) return true;
-      return item.competencies.some((id) => competency(id).field === state.field);
+      if (materialFields(item).includes(state.field)) return true;
+      return claims.some((id) => competency(id) && competency(id).field === state.field);
     });
     const shelf = materials.map((item) => {
-      const claims = item.competencies.map((id) => {
+      const claims = (item.competencies || []).map((id) => {
         const claim = competency(id);
+        if (!claim) return "";
         return `<li class="field-${claim.field}">${esc(claim.short)}</li>`;
       }).join("");
+      const fieldNames = materialFields(item).map((id) => field(id).short).join(" · ");
       return `<article class="card">
-        <p class="eyebrow">${esc(field(item.field).name)} · ${esc(mediaLabel(item.medium))} · ${item.minutes} min</p>
+        <p class="eyebrow">${esc(fieldNames)} · ${esc(mediaLabel(item.medium))} · ${item.minutes} min</p>
         <h3>${esc(item.title)}</h3>
         <p>${esc(item.summary)}</p>
         <ul class="tags">${claims}</ul>
         <p class="point-offer"><b>0 points</b> <span>practice</span></p>
-        <p class="meta">Open material. Using it does not add a mark.</p>
+        <p class="meta">${esc(qualitySentence(item))} Using it does not add a mark.</p>
       </article>`;
     }).join("");
     const focusName = skillId ? competency(skillId).name : state.field === "all" ? "every skill" : field(state.field).name;
@@ -1424,40 +1873,40 @@ function levelLabel(n) {
     const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>All fields</option>`]
       .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
       .join("");
-    const mediumOptions = [`<option value="all"${state.medium === "all" ? " selected" : ""}>All media</option>`]
+    const mediumOptions = [`<option value="all"${state.medium === "all" ? " selected" : ""}>All kinds</option>`]
       .concat(A.media.map((item) => `<option value="${item.id}"${state.medium === item.id ? " selected" : ""}>${esc(item.label)}</option>`))
       .join("");
-    const rows = A.materials.filter(materialMatches);
-    const cards = rows.map((item) => {
-      const claims = item.competencies.map((id) => {
-        const claim = competency(id);
-        return `<li class="field-${claim.field}">${esc(claim.short)}</li>`;
-      }).join("");
-      return `<article class="card">
-        <p class="eyebrow">${esc(field(item.field).name)} · ${esc(mediaLabel(item.medium))} · ${item.minutes} min</p>
-        <h3>${esc(item.title)}</h3>
-        <p>${esc(item.summary)}</p>
-        <ul class="tags">${claims}</ul>
-        <p class="point-offer"><b>0 points</b> <span>practice</span></p>
-        <p class="meta">Open shelf. Using this does not move a level.</p>
-      </article>`;
-    }).join("");
-    const empty = `<p class="empty">Nothing matches both filters. Clear one. The shelf stays open either way, and none of it awards credit.</p>`;
+    const rows = allMaterials().filter(materialMatches);
+    const judged = rows.filter((item) => usesOf(item).length).sort(compareShelf);
+    const waiting = rows.filter((item) => !usesOf(item).length).sort(compareWaiting);
     return `<article class="page" data-page="library">
       <header class="page-head">
         <p class="eyebrow">Open shelf</p>
-        <h2>Materials for any student.</h2>
-        <p class="lede">Lectures, texts, simulations, and bench cards sit on one shelf. A student uses the medium they can stay with. Access is open. Each item is worth 0 points. Credit is a scored observation, under a rubric, on the panel.</p>
+        <h2>A shelf anyone can add to.</h2>
+        <p class="lede">A student, a professor, or someone outside the atelier can put a piece here, for one field or for several at once. Every student can use it. Quality is how many other students used it, and the quality scores those students gave. The same rule covers text, video, simulation, experiment, and discussion. Each piece is worth 0 points. Use does not add a mark.</p>
+        <p class="meta" id="shelf-census">${esc(censusSentence(allMaterials()))}</p>
       </header>
       <div class="filters">
         <label>Field
           <select name="field" data-action="filter">${fieldOptions}</select>
         </label>
-        <label>Medium
+        <label>Kind
           <select name="medium" data-action="filter">${mediumOptions}</select>
         </label>
       </div>
-      <div class="shelf">${cards || empty}</div>
+      ${bringForm()}
+      ${shelfBlock(
+        "Judged from use",
+        "Ordered by how many other students used the piece, then by the mean quality score. Once two students have scored it, a mean of 3 or higher reads as keep, below 2 as set aside, and in between as divided.",
+        judged,
+        "Nothing in this part of the shelf matches both filters."
+      )}
+      ${shelfBlock(
+        "Waiting on another student",
+        "No other student has used these yet. Who brought them does not move them up.",
+        waiting,
+        "Nothing in this part of the shelf matches both filters."
+      )}
     </article>`;
   }
 
@@ -1690,7 +2139,12 @@ function levelLabel(n) {
     const y = window.scrollY;
     const active = document.activeElement;
     const restore = active && active.dataset && active.dataset.action && active.dataset.id
-      ? { action: active.dataset.action, id: active.dataset.id, type: active.dataset.type || "" }
+      ? {
+          action: active.dataset.action,
+          id: active.dataset.id,
+          type: active.dataset.type || "",
+          score: active.dataset.score || "",
+        }
       : null;
     renderChrome();
     const root = document.getElementById("app");
@@ -1698,10 +2152,10 @@ function levelLabel(n) {
     if (options.scroll === "top") window.scrollTo(0, 0);
     else window.scrollTo(0, y);
     if (restore && options.scroll !== "top") {
-      const selector = restore.type
-        ? `[data-action="${restore.action}"][data-type="${restore.type}"][data-id="${CSS.escape(restore.id)}"]`
-        : `[data-action="${restore.action}"][data-id="${CSS.escape(restore.id)}"]`;
-      const next = document.querySelector(selector);
+      const bits = [`[data-action="${restore.action}"]`, `[data-id="${CSS.escape(restore.id)}"]`];
+      if (restore.type) bits.push(`[data-type="${CSS.escape(restore.type)}"]`);
+      if (restore.score) bits.push(`[data-score="${CSS.escape(restore.score)}"]`);
+      const next = document.querySelector(bits.join(""));
       if (next && next !== document.activeElement) next.focus({ preventScroll: true });
     }
   }
@@ -1810,8 +2264,32 @@ function levelLabel(n) {
       window.print();
       return;
     }
+    if (action === "use-material") {
+      if (state.role !== "student") return;
+      const item = materialById(node.dataset.id);
+      if (!item || contributorStudentId(item) === current().id) return;
+      recordUse(item.id, current().id);
+      persist();
+      render();
+      const card = document.getElementById(item.id);
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
+    if (action === "rate-material") {
+      if (state.role !== "student") return;
+      const item = materialById(node.dataset.id);
+      const score = Number(node.dataset.score);
+      if (!item || contributorStudentId(item) === current().id) return;
+      if (!Number.isInteger(score) || score < 1 || score > 4) return;
+      recordRating(item.id, current().id, score);
+      persist();
+      render();
+      const card = document.getElementById(item.id);
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
     if (action === "reset") {
-      const ok = window.confirm("Clear challenges, mentor notes, and reports saved in this browser?");
+      const ok = window.confirm("Clear challenges, mentor notes, reports, and materials saved in this browser? The sample shelf stays.");
       if (!ok) return;
       try { localStorage.removeItem(KEY); } catch (err) { /* ignore */ }
       const route = state.route;
@@ -1819,6 +2297,7 @@ function levelLabel(n) {
       state = blank();
       state.route = route;
       state.param = param;
+      libraryNotice = "";
       render();
     }
   }
@@ -1826,6 +2305,11 @@ function levelLabel(n) {
   function onChange(event) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (target.name === "external") {
+      const box = document.getElementById("external-fields");
+      if (box) box.hidden = !target.checked;
+      return;
+    }
     if (target.name === "studentId") setStudent(target.value);
     if (target.name === "mentorId") {
       state.mentorId = target.value;
@@ -1904,6 +2388,65 @@ function levelLabel(n) {
       render();
       return;
     }
+    if (form.dataset.form === "bring") {
+      const title = String(data.get("title") || "").trim();
+      const summary = String(data.get("summary") || "").trim();
+      const medium = String(data.get("bringMedium") || "");
+      const minutes = Number(data.get("minutes"));
+      const error = form.querySelector("[data-error]");
+      const fail = (message) => { if (error) error.textContent = message; };
+      const fields = [];
+      for (const fieldId of data.getAll("bringField")) {
+        const id = String(fieldId);
+        if (field(id) && !fields.includes(id)) fields.push(id);
+      }
+      const competencies = [];
+      for (const claimId of data.getAll("bringClaim")) {
+        const claim = competency(String(claimId));
+        if (!claim || competencies.includes(claim.id)) continue;
+        competencies.push(claim.id);
+        if (!fields.includes(claim.field)) fields.push(claim.field);
+      }
+      if (!title || !summary) return fail("Give the piece a title and a summary.");
+      if (!A.media.some((item) => item.id === medium)) return fail("Choose what kind of material it is.");
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 240) return fail("Minutes should be between 1 and 240.");
+      if (!fields.length) return fail("Choose at least one field, or a subject.");
+      const external = data.get("external") === "on";
+      const externalName = String(data.get("externalName") || "").trim().slice(0, 80);
+      const place = String(data.get("place") || "").trim().slice(0, 80);
+      let contributor;
+      if (external) {
+        if (!externalName) return fail("Name the person outside the atelier.");
+        contributor = place
+          ? { kind: "external", name: externalName, place }
+          : { kind: "external", name: externalName };
+      } else if (state.role === "student") {
+        contributor = { kind: "student", id: current().id };
+      } else if (state.role === "mentor") {
+        contributor = { kind: "mentor", id: state.mentorId };
+      } else {
+        contributor = { kind: "director", id: "ortega" };
+      }
+      materialSerial += 1;
+      const item = {
+        id: "mat-local-" + Date.now() + "-" + materialSerial,
+        title: title.slice(0, 140),
+        summary: summary.slice(0, 600),
+        medium,
+        minutes: Math.round(minutes),
+        fields,
+        competencies,
+        contributor,
+        brought: A.today,
+      };
+      state.contributions.push(item);
+      libraryNotice = item.id;
+      persist();
+      render();
+      const card = document.getElementById(item.id);
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     if (form.dataset.form === "report") {
       if (!canDecide(personRecord)) return;
       const text = String(data.get("body") || "").trim();
@@ -1950,6 +2493,7 @@ function levelLabel(n) {
       const next = readRoute();
       state.route = next.route;
       state.param = next.param;
+      libraryNotice = "";
       render({ scroll: "top" });
     });
     document.body.addEventListener("click", onClick);

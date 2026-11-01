@@ -1065,7 +1065,114 @@
       competencies: ["EH", "PL"],
       summary: "Four students, one claim, questions that stay on the claim. A model for the revision work product.",
     },
+    {
+      id: "mat-band-sheet",
+      title: "A sheet that keeps the band",
+      fields: ["mathematics", "physics"],
+      medium: "simulation",
+      minutes: 25,
+      competencies: ["MS", "MA", "PM"],
+      summary: "Idris put his scour sheet on the shelf. Tide, grain, and model error stay in the conclusion. A peer can move the inputs and watch a single number try to return.",
+      contributor: { kind: "student", id: "idris" },
+      brought: "2026-10-19",
+      uses: ["amina", "leo", "noor"],
+      ratings: [
+        { studentId: "amina", score: 4 },
+        { studentId: "noor", score: 3 },
+      ],
+    },
+    {
+      id: "mat-retire",
+      title: "When to retire a model",
+      fields: ["philosophy", "physics"],
+      medium: "discussion",
+      minutes: 35,
+      competencies: ["PK", "PX"],
+      summary: "Dr. Adeyemi's notes from the bench seminar. A model earns its place until a stated observation cuts against it. A protocol on the shelf is not a level.",
+      contributor: { kind: "mentor", id: "adeyemi" },
+      brought: "2026-10-09",
+      uses: ["soren", "amina", "jun"],
+      ratings: [
+        { studentId: "soren", score: 4 },
+        { studentId: "amina", score: 3 },
+        { studentId: "jun", score: 2 },
+      ],
+    },
+    {
+      id: "mat-south-walk",
+      title: "Walking the south approach",
+      fields: ["english", "philosophy"],
+      medium: "text",
+      minutes: 8,
+      competencies: ["EH", "PE"],
+      summary: "Mara Quill rents on the south approach in Greyhaven. She wrote what the flood hours are like from that street, for students who will brief the council.",
+      contributor: { kind: "external", name: "Mara Quill", place: "Greyhaven, south approach" },
+      brought: "2026-10-16",
+      uses: ["idris", "amina"],
+      ratings: [
+        { studentId: "idris", score: 4 },
+      ],
+    },
+    {
+      id: "mat-hours",
+      title: "The evening-hours column",
+      fields: ["mathematics", "philosophy"],
+      medium: "text",
+      minutes: 14,
+      competencies: ["MS", "PE"],
+      summary: "Noor wrote out the attendance series that the vitality index drops, and named the people who work those hours, so the next person to rebuild the number can keep the column.",
+      contributor: { kind: "student", id: "noor" },
+      brought: "2026-10-29",
+    },
   ];
+
+  /* House pieces pick up use and quality scores here.
+     A student, a professor, or someone outside can bring more.
+     The contributor is never a user of their own piece.
+     A piece with no entry, and no uses of its own, is still waiting. */
+  const materialActivity = {
+    "mat-maps": {
+      uses: ["soren"],
+      ratings: [{ studentId: "soren", score: 4 }],
+    },
+    "mat-sandbox": {
+      uses: ["idris", "noor", "amina"],
+      ratings: [
+        { studentId: "idris", score: 4 },
+        { studentId: "noor", score: 4 },
+        { studentId: "amina", score: 3 },
+      ],
+    },
+    "mat-estimate": {
+      uses: ["leo", "rafi"],
+      ratings: [{ studentId: "leo", score: 3 }],
+    },
+    "mat-scour": {
+      uses: ["amina", "idris"],
+      ratings: [
+        { studentId: "amina", score: 4 },
+        { studentId: "idris", score: 3 },
+      ],
+    },
+    "mat-optics": {
+      uses: ["jun", "soren"],
+      ratings: [
+        { studentId: "jun", score: 2 },
+        { studentId: "soren", score: 3 },
+      ],
+    },
+    "mat-ray": {
+      uses: ["jun"],
+      ratings: [{ studentId: "jun", score: 4 }],
+    },
+    "mat-brief": {
+      uses: ["amina", "idris"],
+      ratings: [
+        { studentId: "amina", score: 3 },
+        { studentId: "idris", score: 4 },
+      ],
+    },
+  };
 
   const layers = [
     {
@@ -1113,6 +1220,10 @@
       title: "The panel is shared",
       text: "Student, mentor, and director see the same lines. A student can challenge a mark. A challenge leaves the line as it is until someone scores the work again. A mentor may note that the shared skills are far enough along. That sentence is not a certificate.",
     },
+    {
+      title: "Students judge the shelf",
+      text: "A student, a professor, or someone outside the atelier may add material, for one field or for several at once. Every student may use it. Use does not add a mark, and the piece is worth 0 points. Quality is how many other students used the piece, and the mean of the quality scores those students gave. The contributor does not score their own piece. Text, video, simulation, experiment, and discussion follow the same rule.",
+    },
   ];
 
   globalThis.ATELIER = {
@@ -1130,6 +1241,7 @@
     projects,
     workshops,
     materials,
+    materialActivity,
     layers,
     decisions,
     floorIds: ["MA", "EW", "PM", "PE"],

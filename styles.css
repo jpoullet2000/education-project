@@ -601,6 +601,53 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.45); }
 .activity-col .card:last-child { margin-bottom: 0; }
 .shelf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.7rem; }
 .shelf article h3 { font-size: 1.15rem; margin: 0.2rem 0; }
+.shelf-block { margin-top: 0.35rem; }
+.shelf .empty { grid-column: 1 / -1; }
+.bring textarea { min-height: 4.6rem; }
+fieldset {
+  border: 1px solid var(--line);
+  margin: 0.2rem 0;
+  padding: 0.55rem 0.7rem 0.65rem;
+}
+legend {
+  padding: 0 0.3rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.form-error { color: var(--c-physics); margin: 0; }
+.form-error:empty { display: none; }
+details.claims summary { cursor: pointer; color: var(--ink-soft); font-size: 0.92rem; }
+.stack-form label.choice,
+.stack-form label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.checks { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; margin: 0.2rem 0 0.55rem; }
+input[type="checkbox"] {
+  width: 0.95rem;
+  height: 0.95rem;
+  padding: 0;
+  accent-color: var(--ink);
+}
+.quality { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0; }
+.quality button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper-2);
+}
+.tags li.field-philosophy,
+.tags li.field-mathematics,
+.tags li.field-physics,
+.tags li.field-english {
+  border-color: var(--c);
+  color: var(--ink);
+}
 .tags { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0; margin: 0.45rem 0 0; list-style: none; }
 .tags li, .pill {
   font-size: 0.75rem;
