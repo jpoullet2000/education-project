@@ -7,7 +7,7 @@
   const A = globalThis.ATELIER;
   const KEY = "continuum-atelier-v1";
 
-  const ROUTES = ["model", "panel", "map", "projects", "workshops", "library", "cohort", "report"];
+  const ROUTES = ["model", "panel", "map", "projects", "workshops", "activities", "library", "cohort", "report"];
 
   function blank() {
     return {
@@ -18,6 +18,7 @@
       focus: { type: "competency", id: "PE" },
       layer: "caf",
       field: "all",
+      skill: "all",
       medium: "all",
       route: "model",
       param: "",
@@ -352,6 +353,7 @@ function levelLabel(n) {
       focus: state.focus,
       layer: state.layer,
       field: state.field,
+      skill: state.skill,
       medium: state.medium,
       logs: state.logs,
       challenges: state.challenges,
@@ -381,6 +383,7 @@ function levelLabel(n) {
     if (!person(state.mentorId)) state.mentorId = "ibarra";
     if (!["student", "mentor", "director"].includes(state.role)) state.role = "student";
     if (!competency(state.competencyId)) state.competencyId = "PE";
+    if (state.skill !== "all" && !competency(state.skill)) state.skill = "all";
     if (!focusOk(state.focus)) state.focus = { type: "competency", id: "PE" };
     if (!A.layers.some((item) => item.id === state.layer) && state.layer !== "") state.layer = "caf";
     if (!Array.isArray(state.logs)) state.logs = [];
@@ -830,6 +833,7 @@ function levelLabel(n) {
           <div class="actions no-print">
             <p>${esc(recommendation(personRecord))}</p>
             ${actionForms(personRecord)}
+            <p><a href="#activities" data-action="open-activities" data-id="${claim.id}">Activities and materials for ${esc(claim.name)}</a></p>
             <p><a href="#report">Open the report</a></p>
           </div>
         </aside>
@@ -1093,6 +1097,174 @@ function levelLabel(n) {
     return item.competencies.some((id) => competency(id).field === state.field);
   }
 
+  function activityEvidence(personRecord, source, sourceId, skillId) {
+    return A.evidence.filter((item) => {
+      if (item.studentId !== personRecord.id || item.source !== source || item.sourceId !== sourceId) return false;
+      if (skillId && !item.scores.some((score) => score.competencyId === skillId)) return false;
+      return true;
+    }).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  function shownSkills(skillIds, skillId) {
+    return skillIds.filter((id) => {
+      if (skillId) return id === skillId;
+      if (state.field !== "all") return competency(id).field === state.field;
+      return true;
+    });
+  }
+
+  function activityTouches(skillIds, skillId, fieldId) {
+    if (skillId) return skillIds.includes(skillId);
+    if (fieldId && fieldId !== "all") return skillIds.some((id) => competency(id).field === fieldId);
+    return true;
+  }
+
+  function activityBoard(personRecord) {
+    const skillId = state.skill !== "all" && competency(state.skill) ? state.skill : "";
+    const fieldId = state.field;
+    const rows = [];
+    for (const item of A.workshops) {
+      if (!activityTouches(item.elicits, skillId, fieldId)) continue;
+      const seat = personRecord.workshops[item.id];
+      const phase = seat === "done" ? "closed" : seat === "enrolled" ? "soon" : "todo";
+      const scored = activityEvidence(personRecord, "workshop", item.id, skillId);
+      let detail;
+      if (phase === "closed" && scored.length) {
+        detail = scored.map((entry) => `${entry.title} · ${formatDate(entry.date)}`).join("; ");
+      } else if (phase === "closed") {
+        detail = item.scored ? "Closed. No score was recorded for this filter." : "Closed. This workshop carries no score.";
+      } else if (phase === "soon") {
+        detail = "In progress now.";
+      } else {
+        detail = "Still to do.";
+      }
+      rows.push({
+        phase,
+        kind: "Workshop",
+        name: item.name,
+        href: "#workshops",
+        summary: item.summary,
+        skills: shownSkills(item.elicits, skillId),
+        detail,
+      });
+    }
+    for (const item of A.projects) {
+      if (!activityTouches(item.elicits, skillId, fieldId)) continue;
+      const seated = personRecord.projectIds.includes(item.id);
+      const recommended = personRecord.recommendedProjectId === item.id;
+      const scored = activityEvidence(personRecord, "project", item.id, skillId);
+      let phase = "todo";
+      let detail = "Still to do.";
+      if (scored.length) {
+        phase = "closed";
+        detail = scored.map((entry) => `${entry.title} · ${formatDate(entry.date)}`).join("; ");
+      } else if (recommended) {
+        phase = "soon";
+        detail = "Recommended next seat.";
+      } else if (seated) {
+        phase = "soon";
+        detail = "Seat taken. No scored work on this skill yet.";
+      }
+      rows.push({
+        phase,
+        kind: "Project",
+        name: item.name,
+        href: `#projects/${item.id}`,
+        summary: item.summary,
+        skills: shownSkills(item.elicits, skillId),
+        detail,
+      });
+    }
+    return rows;
+  }
+
+  function renderActivities() {
+    const personRecord = current();
+    const skillId = state.skill !== "all" && competency(state.skill) ? state.skill : "";
+    const rows = activityBoard(personRecord);
+    const phases = [
+      ["closed", "Closed"],
+      ["soon", "Soon"],
+      ["todo", "Still to do"],
+    ];
+    const columns = phases.map(([phase, label]) => {
+      const items = rows.filter((row) => row.phase === phase);
+      const cards = items.map((row) => {
+        const tags = row.skills.map((id) => {
+          const claim = competency(id);
+          return `<li class="field-${claim.field}">${esc(claim.short)}</li>`;
+        }).join("");
+        return `<article class="card">
+          <p class="eyebrow">${esc(row.kind)}</p>
+          <h3><a href="${esc(row.href)}">${esc(row.name)}</a></h3>
+          <p>${esc(row.summary)}</p>
+          ${tags ? `<ul class="tags">${tags}</ul>` : ""}
+          <p class="meta">${esc(row.detail)}</p>
+        </article>`;
+      }).join("");
+      return `<section class="activity-col">
+        <h3>${esc(label)} <span class="meta">${items.length}</span></h3>
+        ${cards || `<p class="empty">Nothing ${label.toLowerCase()} for this filter.</p>`}
+      </section>`;
+    }).join("");
+    const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>All fields</option>`]
+      .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
+      .join("");
+    const skillPool = state.field === "all"
+      ? A.competencies
+      : A.competencies.filter((item) => item.field === state.field);
+    const skillOptions = [`<option value="all"${state.skill === "all" ? " selected" : ""}>All skills</option>`]
+      .concat(skillPool.map((item) => `<option value="${item.id}"${state.skill === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
+      .join("");
+    const materials = A.materials.filter((item) => {
+      if (skillId) return item.competencies.includes(skillId);
+      if (state.field === "all") return true;
+      if (item.field === state.field) return true;
+      return item.competencies.some((id) => competency(id).field === state.field);
+    });
+    const shelf = materials.map((item) => {
+      const claims = item.competencies.map((id) => {
+        const claim = competency(id);
+        return `<li class="field-${claim.field}">${esc(claim.short)}</li>`;
+      }).join("");
+      return `<article class="card">
+        <p class="eyebrow">${esc(field(item.field).name)} · ${esc(mediaLabel(item.medium))} · ${item.minutes} min</p>
+        <h3>${esc(item.title)}</h3>
+        <p>${esc(item.summary)}</p>
+        <ul class="tags">${claims}</ul>
+        <p class="meta">Open material. Using it does not add a mark.</p>
+      </article>`;
+    }).join("");
+    const focusName = skillId ? competency(skillId).name : state.field === "all" ? "every skill" : field(state.field).name;
+    const closed = rows.filter((row) => row.phase === "closed").length;
+    const soon = rows.filter((row) => row.phase === "soon").length;
+    const todo = rows.filter((row) => row.phase === "todo").length;
+    return `<article class="page" data-page="activities" data-student="${personRecord.id}">
+      <header class="page-head">
+        <p class="eyebrow">Activities · ${esc(personRecord.name)}</p>
+        <h2>What is closed, soon, and still to do.</h2>
+        <p class="lede">Workshops and projects that can move ${esc(focusName)}. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials for the same skills stay open underneath.</p>
+      </header>
+      <div class="filters">
+        <label>Field
+          <select name="field" data-action="filter">${fieldOptions}</select>
+        </label>
+        <label>Skill
+          <select name="skill" data-action="filter">${skillOptions}</select>
+        </label>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><b>${closed}</b><span>closed</span></div>
+        <div class="stat"><b>${soon}</b><span>soon</span></div>
+        <div class="stat"><b>${todo}</b><span>still to do</span></div>
+        <div class="stat"><b>${materials.length}</b><span>open materials</span></div>
+      </div>
+      <div class="activity-board">${columns}</div>
+      <h3 class="section-title">Materials for these skills</h3>
+      <div class="shelf">${shelf || `<p class="empty">No material on the shelf for this filter.</p>`}</div>
+    </article>`;
+  }
+
   function renderLibrary() {
     const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>All fields</option>`]
       .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
@@ -1289,6 +1461,7 @@ function levelLabel(n) {
     if (state.route === "map") return renderMap();
     if (state.route === "projects") return renderProjects();
     if (state.route === "workshops") return renderWorkshops();
+    if (state.route === "activities") return renderActivities();
     if (state.route === "library") return renderLibrary();
     if (state.route === "cohort") return renderCohort();
     if (state.route === "report") return renderReport();
@@ -1302,6 +1475,7 @@ function levelLabel(n) {
       map: "Competency map",
       projects: state.param && project(state.param) ? project(state.param).name : "Projects",
       workshops: "Workshops",
+      activities: "Activities",
       library: "Library",
       cohort: "Cohort",
       report: "Report",
@@ -1439,6 +1613,21 @@ function levelLabel(n) {
       go("panel");
       return;
     }
+    if (action === "open-activities") {
+      event.preventDefault();
+      const claim = competency(node.dataset.id);
+      if (claim) {
+        state.skill = claim.id;
+        state.field = claim.field;
+        state.competencyId = claim.id;
+      } else {
+        state.skill = "all";
+        state.field = "all";
+      }
+      persist();
+      go("activities");
+      return;
+    }
     if (action === "endorse") {
       const personRecord = current();
       if (!canDecide(personRecord) || !floorMet(personRecord)) return;
@@ -1487,8 +1676,16 @@ function levelLabel(n) {
       persist();
       render();
     }
-    if (target.name === "field" || target.name === "medium") {
+    if (target.name === "field" || target.name === "medium" || target.name === "skill") {
       state[target.name] = target.value;
+      if (target.name === "skill" && target.value !== "all") {
+        const claim = competency(target.value);
+        if (claim) state.field = claim.field;
+      }
+      if (target.name === "field" && state.skill !== "all") {
+        const claim = competency(state.skill);
+        if (!claim || (target.value !== "all" && claim.field !== target.value)) state.skill = "all";
+      }
       persist();
       render();
     }

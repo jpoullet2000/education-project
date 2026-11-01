@@ -590,6 +590,15 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.45); }
 .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
 .filters label { display: grid; gap: 0.15rem; font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
 
+.activity-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  align-items: start;
+}
+.activity-col h3 { margin: 0 0 0.55rem; font-size: 1.35rem; }
+.activity-col .card { margin-bottom: 0.65rem; }
+.activity-col .card:last-child { margin-bottom: 0; }
 .shelf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.7rem; }
 .shelf article h3 { font-size: 1.15rem; margin: 0.2rem 0; }
 .tags { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0; margin: 0.45rem 0 0; list-style: none; }
@@ -669,7 +678,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.45); }
   .ecd { grid-template-columns: 1fr; }
   .gutter { flex-direction: row; padding: 0.2rem 0; }
   .gutter b { transform: rotate(90deg); }
-  .panel-grid, .grid-3, .grid-2, .shelf, .map-cards { grid-template-columns: 1fr; }
+  .panel-grid, .grid-3, .grid-2, .shelf, .map-cards, .activity-board { grid-template-columns: 1fr; }
   .inspector { position: static; order: -1; }
   .site-foot { flex-direction: column; align-items: flex-start; }
 }
