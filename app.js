@@ -251,6 +251,116 @@ function levelLabel(n) {
     return item.source;
   }
 
+  function pointsLabel(n) {
+    return n === 1 ? "1 point" : `${n} points`;
+  }
+
+  function offerPoints(ids) {
+    return ids.length * 4;
+  }
+
+  function offerPhrase(ids) {
+    const n = offerPoints(ids);
+    if (n === 0) return "0 points";
+    return `Up to ${pointsLabel(n)}`;
+  }
+
+  function skillsPointPhrase(ids) {
+    if (!ids.length) return "No skill line moves.";
+    const names = namedList(ids);
+    if (ids.length === 1) return `${names}, 4 points.`;
+    return `${names}, 4 points each.`;
+  }
+
+  function stagePointsSentence(level) {
+    if (level == null) return "No points on this line yet. A mark is worth 1, 2, 3, or 4 points, matching the stage.";
+    return `${levelLabel(level)} is ${pointsLabel(level)} on this line. A later mark can raise it as far as 4 points.`;
+  }
+
+  function evidencePoints(item) {
+    return item.scores.reduce((sum, score) => sum + score.level, 0);
+  }
+
+  function workshopStatusLabel(status) {
+    if (status === "done") return "Done";
+    if (status === "enrolled") return "In progress";
+    return "Not started";
+  }
+
+  function projectStatusLabel(personRecord, projectId) {
+    if (personRecord.projectIds.includes(projectId)) return "Your project";
+    if (personRecord.recommendedProjectId === projectId) return "Seat waiting";
+    return "Not your seat";
+  }
+
+  function actionStatus(personRecord, source, parent) {
+    if (source === "workshop") return `${parent.name} · ${workshopStatusLabel(personRecord.workshops[parent.id])}`;
+    return `${parent.name} · ${projectStatusLabel(personRecord, parent.id)}`;
+  }
+
+  function actionCurrent(personRecord, source, parent) {
+    if (source === "workshop") {
+      const status = personRecord.workshops[parent.id];
+      return status === "enrolled" || status === "upcoming";
+    }
+    return personRecord.projectIds.includes(parent.id) || personRecord.recommendedProjectId === parent.id;
+  }
+
+  function overlapNote(item) {
+    const sum = item.activities.reduce((total, activity) => total + offerPoints(activity.competencyIds), 0);
+    const cap = offerPoints(item.elicits);
+    if (sum <= cap) return "";
+    return `The parts share skills, so the ceiling is ${pointsLabel(cap)}, not ${pointsLabel(sum)}.`;
+  }
+
+  function activityList(activities) {
+    return `<ul class="point-mini">${activities.map((activity) => `<li>
+      <span>${esc(activity.kind)} · ${esc(activity.name)}</span>
+      <b>${esc(offerPhrase(activity.competencyIds))}</b>
+      <small>${esc(skillsPointPhrase(activity.competencyIds))}</small>
+    </li>`).join("")}</ul>`;
+  }
+
+  function pointsBoard(personRecord) {
+    const rows = []
+      .concat(A.workshops.map((item) => ({ parent: item, source: "workshop" })))
+      .concat(A.projects.map((item) => ({ parent: item, source: "project" })))
+      .flatMap(({ parent, source }) => parent.activities.map((activity) => ({ activity, parent, source })))
+      .map(({ activity, parent, source }) => {
+        const href = source === "workshop" ? "#workshops" : `#projects/${parent.id}`;
+        const n = offerPoints(activity.competencyIds);
+        const points = n === 0
+          ? `<strong>0</strong> <span>points</span>`
+          : `<strong>${n}</strong> <span>points at most</span>`;
+        return `<tr class="${actionCurrent(personRecord, source, parent) ? "is-yours" : ""}">
+          <th scope="row">${esc(activity.name)}</th>
+          <td>${esc(activity.kind)}</td>
+          <td class="pts">${points}</td>
+          <td>${esc(skillsPointPhrase(activity.competencyIds))}</td>
+          <td><a href="${href}">${esc(actionStatus(personRecord, source, parent))}</a></td>
+        </tr>`;
+      }).join("");
+    return `<section class="point-board" aria-labelledby="points-title">
+      <h3 class="section-title" id="points-title">Points for each action</h3>
+      <p>Every workshop, test, and piece of project work lists the points it can place. A recorded mark is worth 1 point at emerging, 2 at developing, 3 at proficient, and 4 at advanced. You receive the points a mentor records. The skill line keeps the furthest of those points.</p>
+      <div class="table-wrap">
+        <table class="points-table">
+          <caption>What ${esc(firstName(personRecord))} can earn</caption>
+          <thead>
+            <tr>
+              <th scope="col">Action</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Points</th>
+              <th scope="col">Where the points land</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>`;
+  }
+
   function recommendation(personRecord) {
     const name = firstName(personRecord);
     const flag = attention(personRecord);
@@ -460,6 +570,26 @@ function levelLabel(n) {
         for (const id of feature.competencyIds) expect(!!competency(id), "feature " + id);
       }
     }
+    const activityIds = [];
+    const kinds = new Set(["Workshop", "Test", "Project"]);
+    for (const item of A.workshops.concat(A.projects)) {
+      expect(Array.isArray(item.activities) && item.activities.length > 0, "activities " + item.id);
+      const union = [];
+      for (const activity of item.activities) {
+        activityIds.push(activity.id);
+        expect(kinds.has(activity.kind), "activity kind " + activity.id);
+        for (const id of activity.competencyIds) {
+          expect(item.elicits.includes(id), "activity skill " + activity.id + " " + id);
+          if (!union.includes(id)) union.push(id);
+        }
+      }
+      expect(union.length === item.elicits.length && item.elicits.every((id) => union.includes(id)), "activity union " + item.id);
+    }
+    expect(new Set(activityIds).size === activityIds.length, "unique activity ids");
+    expect(offerPoints(workshop("sampler").elicits) === 0, "sampler points");
+    expect(offerPoints(workshop("diagnostic").elicits) === 24, "diagnostic points");
+    expect(offerPoints(project("coastal").elicits) === 44, "coastal points");
+    expect(evidencePoints(byId(A.evidence, "ev-amina-diag")) === 9, "amina diagnostic points");
     for (const personRecord of A.students) {
       expect(!!person(personRecord.mentorId), "mentor " + personRecord.id);
       for (const id of personRecord.projectIds) expect(!!project(id), "seat " + id);
@@ -513,7 +643,7 @@ function levelLabel(n) {
       const feature = project("coastal").features.find((item) => item.id === focus.id);
       if (!feature) return "";
       const names = feature.competencyIds.map((id) => competency(id).name);
-      return `${feature.label}. ${feature.text} It is built to elicit ${names.join(", ")}.`;
+      return `${feature.label}. ${feature.text} It is built to elicit ${names.join(", ")}, ${offerPhrase(feature.competencyIds).toLowerCase()}.`;
     }
     return "";
   }
@@ -624,7 +754,7 @@ function levelLabel(n) {
       </svg>
       <figcaption class="legend">
         ${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}
-        <span>Four arcs are the stages: emerging, developing, proficient, advanced. The fill stops at the furthest stage reached. Each dot is an exercise, a test, or a project, and one piece of work can dot several skills. A dashed arc has no evidence yet. The bar under a field follows the skills in that field that already have evidence. Lines join subjects to read together.</span>
+        <span>Four arcs are the stages: emerging, developing, proficient, advanced. A stage is worth its number in points, from 1 to 4. The fill stops at the furthest stage reached. Each dot is an exercise, a test, or a project, and one piece of work can dot several skills. A dashed arc has no evidence yet. The bar under a field follows the skills in that field that already have evidence. Lines join subjects to read together.</span>
       </figcaption>
     </figure>`;
   }
@@ -667,7 +797,7 @@ function levelLabel(n) {
     const scores = item.scores.map((score) => {
       const claim = competency(score.competencyId);
       const selected = state.competencyId === score.competencyId ? "is-selected" : "";
-      return `<li><button type="button" class="${selected}" data-action="select-competency" data-id="${score.competencyId}">${esc(claim.name)} · ${esc(levelLabel(score.level))}</button></li>`;
+      return `<li><button type="button" class="${selected}" data-action="select-competency" data-id="${score.competencyId}">${esc(claim.name)} · ${esc(levelLabel(score.level))} · ${esc(pointsLabel(score.level))}</button></li>`;
     }).join("");
     const challenges = state.challenges.filter((entry) => entry.evidenceId === item.id);
     const challengeHTML = challenges.map((entry) => {
@@ -683,6 +813,7 @@ function levelLabel(n) {
     return `<article class="evidence" id="${item.id}">
       <p class="eyebrow">${esc(sourceLabel(item))}</p>
       <h3>${esc(item.title)}</h3>
+      <p class="point-offer"><b>${esc(pointsLabel(evidencePoints(item)))}</b> <span>on this work</span></p>
       <p class="meta">${esc(formatDate(item.date))} · scored by ${esc(person(item.assessorId).name)}</p>
       <p>${esc(item.summary)}</p>
       <ul class="scores">${scores}</ul>
@@ -809,6 +940,7 @@ function levelLabel(n) {
         <p class="meta">On the record since ${esc(formatDate(personRecord.started))}${projects ? ` · ${projects}` : ""}</p>
       </div>
       <p>${esc(authority(personRecord))}</p>
+      ${pointsBoard(personRecord)}
       <div class="panel-grid">
         ${renderNetwork(personRecord)}
         <aside class="inspector">
@@ -821,6 +953,7 @@ function levelLabel(n) {
             <p class="eyebrow">Selected subject</p>
             <h3 class="field-${claim.field}">${esc(claim.name)}</h3>
             <p class="level-line">${meter(level, claim.field)} <span>${esc(levelLabel(level))}</span></p>
+            <p class="meta">${esc(stagePointsSentence(level))}</p>
             <p>${esc(claim.claim)}</p>
             <p class="eyebrow">What counts as evidence</p>
             <ul class="rules">${claim.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>
@@ -930,7 +1063,7 @@ function levelLabel(n) {
       ${ecdBoard()}
       <div class="rule">
         <p class="eyebrow">Update rule</p>
-        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage.</p>
+        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. A mark is worth 1, 2, 3, or 4 points, matching the stage, and an action shows the most it can place. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage.</p>
       </div>
       <h3 class="section-title">Decisions already in force</h3>
       <div class="grid-3">${decisions}</div>
@@ -961,6 +1094,7 @@ function levelLabel(n) {
           <p class="eyebrow">${esc(item.name)}</p>
           <h3><button type="button" class="text-btn" data-action="select-competency" data-id="${claim.id}">${esc(claim.name)}</button></h3>
           <p class="level-line">${meter(level, item.id)} <span>${esc(levelLabel(level))} for ${esc(firstName(personRecord))}</span></p>
+          <p class="meta">${esc(stagePointsSentence(level))}</p>
           <p>${esc(claim.claim)}</p>
           <p class="eyebrow">Evidence rules</p>
           <ul class="rules">${claim.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>
@@ -1002,10 +1136,13 @@ function levelLabel(n) {
     }
     const pips = fields.map((id) => `<span class="pill field-${id}">${esc(field(id).short)}</span>`).join("");
     const names = seats.on.map((personRecord) => personRecord.name).join(", ") || "Open seat";
+    const viewer = current();
     return `<article class="card">
       <p class="eyebrow">${esc(item.place)}</p>
       <h3><a href="#projects/${item.id}">${esc(item.name)}</a></h3>
       <p>${esc(item.summary)}</p>
+      <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b> <span>across ${item.elicits.length} skills</span></p>
+      <p class="meta">${esc(firstName(viewer))}: ${esc(projectStatusLabel(viewer, item.id))}.</p>
       <p class="tags">${pips}</p>
       <p class="meta">On it: ${esc(names)}</p>
     </article>`;
@@ -1017,7 +1154,7 @@ function levelLabel(n) {
     }
     const seats = peopleOn(item.id);
     const evidence = A.evidence.filter((row) => row.sourceId === item.id).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
-    const features = item.features.map((feature) => `<div class="card"><h3>${esc(feature.label)}</h3><p>${esc(feature.text)}</p><p class="meta">${esc(feature.competencyIds.map((id) => competency(id).name).join(", "))}</p></div>`).join("");
+    const features = item.features.map((feature) => `<div class="card"><h3>${esc(feature.label)}</h3><p>${esc(feature.text)}</p><p class="meta">${esc(offerPhrase(feature.competencyIds))}. ${esc(feature.competencyIds.map((id) => competency(id).name).join(", "))}</p></div>`).join("");
     const claims = item.elicits.map((id) => `<button type="button" class="text-btn" data-action="select-competency" data-id="${id}">${esc(competency(id).name)}</button>`).join(", ");
     const on = seats.on.map((personRecord) => `<a href="#panel" data-action="open-student" data-id="${personRecord.id}">${esc(personRecord.name)}</a>`).join(", ") || "None yet";
     const invited = seats.invited.map((personRecord) => `${esc(personRecord.name)} — ${esc(personRecord.scaffold)}`).join(" ");
@@ -1028,6 +1165,10 @@ function levelLabel(n) {
         <p class="lede">${esc(item.brief)}</p>
       </header>
       <p class="meta">${esc(item.place)}</p>
+      <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b> <span>across ${item.elicits.length} skills</span></p>
+      ${overlapNote(item) ? `<p class="meta">${esc(overlapNote(item))}</p>` : ""}
+      <h3 class="section-title">Points for each part</h3>
+      ${activityList(item.activities)}
       <p><strong>On it.</strong> ${on}</p>
       ${invited ? `<p><strong>Scaffolded seat, not yet taken.</strong> ${invited}</p>` : ""}
       <h3 class="section-title">The task, in parts</h3>
@@ -1060,10 +1201,14 @@ function levelLabel(n) {
       const claims = item.elicits.length
         ? item.elicits.map((id) => competency(id).name).join(", ")
         : "No claims. Notes stay notes.";
+      const viewer = current();
       return `<article class="card" id="workshop-${item.id}">
         <p class="eyebrow">${esc(item.kind)}${item.scored ? " · scored" : " · unscored"}</p>
         <h3>${esc(item.name)}</h3>
+        <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b></p>
+        <p class="meta">${esc(firstName(viewer))}: ${esc(workshopStatusLabel(viewer.workshops[item.id]))}.</p>
         <p>${esc(item.detail)}</p>
+        ${activityList(item.activities)}
         <p class="meta">Can elicit: ${esc(claims)}</p>
         <p class="meta">In it now: ${esc(now)}. Completed by ${done.length}.</p>
       </article>`;
@@ -1145,6 +1290,9 @@ function levelLabel(n) {
         href: "#workshops",
         summary: item.summary,
         skills: shownSkills(item.elicits, skillId),
+        points: offerPhrase(item.elicits),
+        activities: item.activities,
+        note: overlapNote(item),
         detail,
       });
     }
@@ -1172,6 +1320,9 @@ function levelLabel(n) {
         href: `#projects/${item.id}`,
         summary: item.summary,
         skills: shownSkills(item.elicits, skillId),
+        points: offerPhrase(item.elicits),
+        activities: item.activities,
+        note: overlapNote(item),
         detail,
       });
     }
@@ -1197,7 +1348,10 @@ function levelLabel(n) {
         return `<article class="card">
           <p class="eyebrow">${esc(row.kind)}</p>
           <h3><a href="${esc(row.href)}">${esc(row.name)}</a></h3>
+          <p class="point-offer"><b>${esc(row.points)}</b></p>
           <p>${esc(row.summary)}</p>
+          ${activityList(row.activities)}
+          ${row.note ? `<p class="meta">${esc(row.note)}</p>` : ""}
           ${tags ? `<ul class="tags">${tags}</ul>` : ""}
           <p class="meta">${esc(row.detail)}</p>
         </article>`;
@@ -1232,6 +1386,7 @@ function levelLabel(n) {
         <h3>${esc(item.title)}</h3>
         <p>${esc(item.summary)}</p>
         <ul class="tags">${claims}</ul>
+        <p class="point-offer"><b>0 points</b> <span>practice</span></p>
         <p class="meta">Open material. Using it does not add a mark.</p>
       </article>`;
     }).join("");
@@ -1243,7 +1398,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Activities · ${esc(personRecord.name)}</p>
         <h2>What is closed, soon, and still to do.</h2>
-        <p class="lede">Workshops and projects that can move ${esc(focusName)}. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials for the same skills stay open underneath.</p>
+        <p class="lede">Workshops, tests, and project work that can move ${esc(focusName)}, each with the points it can place. A recorded mark is worth 1, 2, 3, or 4 points, matching the stage. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials underneath are worth 0 points.</p>
       </header>
       <div class="filters">
         <label>Field
@@ -1283,6 +1438,7 @@ function levelLabel(n) {
         <h3>${esc(item.title)}</h3>
         <p>${esc(item.summary)}</p>
         <ul class="tags">${claims}</ul>
+        <p class="point-offer"><b>0 points</b> <span>practice</span></p>
         <p class="meta">Open shelf. Using this does not move a level.</p>
       </article>`;
     }).join("");
@@ -1291,7 +1447,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Open shelf</p>
         <h2>Materials for any student.</h2>
-        <p class="lede">Lectures, texts, simulations, and bench cards sit on one shelf. A student uses the medium they can stay with. Access is open. Credit is a scored observation, under a rubric, on the panel.</p>
+        <p class="lede">Lectures, texts, simulations, and bench cards sit on one shelf. A student uses the medium they can stay with. Access is open. Each item is worth 0 points. Credit is a scored observation, under a rubric, on the panel.</p>
       </header>
       <div class="filters">
         <label>Field

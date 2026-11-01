@@ -615,6 +615,53 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.45); }
 .map-card.is-selected { border-color: var(--ink); border-top-color: var(--c); }
 .map-card h3 { font-size: 1.2rem; }
 
+.point-board { margin: 0.4rem 0 1.3rem; }
+.point-offer {
+  margin: 0.35rem 0 0.2rem;
+  font-family: var(--serif);
+  font-size: 1.45rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.point-offer span {
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.points-table tbody tr { cursor: default; }
+.points-table tbody tr:hover { background: transparent; }
+.points-table tr.is-yours { background: rgba(255, 255, 255, 0.55); }
+.points-table td.pts, .points-table td.pts strong {
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+.points-table td.pts span {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.point-mini { list-style: none; padding: 0; margin: 0.55rem 0 0.3rem; }
+.point-mini li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.8rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+}
+.point-mini b { font-family: var(--serif); font-weight: 560; white-space: nowrap; }
+.point-mini small { grid-column: 1 / -1; color: var(--ink-soft); font-size: 0.82rem; }
+
 .stat-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.3rem 0 0.9rem; }
 .stat {
   background: var(--paper-2);
@@ -685,6 +732,8 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.45); }
 
 @media (max-width: 640px) {
   .who { justify-content: flex-start; }
+  .point-mini { grid-template-columns: 1fr; }
+  .point-mini b { white-space: normal; }
   .panel-top { flex-direction: column; align-items: flex-start; }
   .flag { white-space: normal; }
 }

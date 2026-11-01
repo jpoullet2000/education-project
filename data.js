@@ -772,6 +772,12 @@
         },
       ],
       varied: "Scaffolding and role can change. The claims the work is allowed to count for do not.",
+      activities: [
+        { id: "coastal-model", name: "Load-path model", kind: "Project", competencyIds: ["PM", "MA", "MG", "MC"] },
+        { id: "coastal-band", name: "Uncertainty band", kind: "Project", competencyIds: ["MS", "MA"] },
+        { id: "coastal-observation", name: "Observation that can embarrass the model", kind: "Project", competencyIds: ["PX", "PM", "PK", "PL"] },
+        { id: "coastal-brief", name: "Public brief", kind: "Project", competencyIds: ["EW", "EH", "PE", "PL"] },
+      ],
     },
     {
       id: "model-world",
@@ -807,6 +813,12 @@
         },
       ],
       varied: "Which system, and how much of the procedure is given. The demand to name a killing observation stays.",
+      activities: [
+        { id: "model-derivation", name: "Derivation", kind: "Project", competencyIds: ["MA", "MC", "MG"] },
+        { id: "model-measure", name: "Measurement log", kind: "Project", competencyIds: ["PX", "PM", "MS", "PO"] },
+        { id: "model-memo", name: "Falsification memo", kind: "Project", competencyIds: ["PK", "PL", "ER"] },
+        { id: "model-essay", name: "Public essay", kind: "Project", competencyIds: ["EW", "EH", "PE"] },
+      ],
     },
     {
       id: "measure",
@@ -842,6 +854,11 @@
         },
       ],
       varied: "Which public number. The obligation to name a person the number misses does not vary.",
+      activities: [
+        { id: "measure-index", name: "Index sheet", kind: "Project", competencyIds: ["MA", "MS", "MC", "MG"] },
+        { id: "measure-sensitivity", name: "Sensitivity log", kind: "Project", competencyIds: ["MC", "MS", "PM", "PX"] },
+        { id: "measure-hides", name: "What the index hides", kind: "Project", competencyIds: ["PE", "EH", "ER", "EW", "PL", "PK"] },
+      ],
     },
     {
       id: "light",
@@ -877,6 +894,11 @@
         },
       ],
       varied: "Bench or sandbox. The subjects the work can count for do not change with the medium.",
+      activities: [
+        { id: "light-ray", name: "Ray prediction", kind: "Project", competencyIds: ["PO", "MG", "MA", "PM"] },
+        { id: "light-measure", name: "Measured angle", kind: "Project", competencyIds: ["PX", "MS", "PK"] },
+        { id: "light-claim", name: "Short claim after the run", kind: "Project", competencyIds: ["EW", "EH", "ER", "PL", "PE"] },
+      ],
     },
   ];
 
@@ -889,6 +911,9 @@
       detail: "New students move through four stations. Mentors watch for attention, avoidance, and questions. Notes stay notes. Nothing here changes a level. The sampler is how a student who does not yet know the fields meets them without being sorted into a class.",
       elicits: [],
       scored: false,
+      activities: [
+        { id: "sampler-stations", name: "Four afternoons", kind: "Workshop", competencyIds: [] },
+      ],
     },
     {
       id: "diagnostic",
@@ -898,6 +923,12 @@
       detail: "An estimation. A short mechanics or experiment station. A paragraph for a reader who was not in the room. A question about who is affected. Scores from stations a student completes enter the panel. A station that is skipped stays unobserved. The studio is how the first projects get scaffolded to actual gaps, not to a hunch.",
       elicits: ["MA", "MS", "EW", "PM", "PX", "PE"],
       scored: true,
+      activities: [
+        { id: "diag-estimation", name: "Estimation station", kind: "Test", competencyIds: ["MA", "MS"] },
+        { id: "diag-mechanics", name: "Mechanics station", kind: "Test", competencyIds: ["PM", "PX"] },
+        { id: "diag-paragraph", name: "Paragraph for a reader", kind: "Test", competencyIds: ["EW"] },
+        { id: "diag-ethics", name: "Who is affected", kind: "Test", competencyIds: ["PE"] },
+      ],
     },
     {
       id: "media",
@@ -907,6 +938,9 @@
       detail: "A damped oscillation, four ways. The next day the student reconstructs it. The reconstruction can be scored for writing, rhetoric, and logic. The preference is a note to the mentor. Credit does not follow from liking a medium. The medium is how the next task is offered.",
       elicits: ["EW", "EH", "PL"],
       scored: true,
+      activities: [
+        { id: "media-reconstruction", name: "Next-day reconstruction", kind: "Test", competencyIds: ["EW", "EH", "PL"] },
+      ],
     },
     {
       id: "argument",
@@ -916,6 +950,9 @@
       detail: "The claim has to be one the student is actually using. A peer asks one question. The revision either meets that question or it does not. Evidence can land on logic, reading, writing, and rhetoric. Students who already show those can skip this workshop.",
       elicits: ["PL", "ER", "EW", "EH"],
       scored: true,
+      activities: [
+        { id: "argument-revision", name: "Revision after a peer's question", kind: "Workshop", competencyIds: ["PL", "ER", "EW", "EH"] },
+      ],
     },
   ];
 
@@ -1070,7 +1107,7 @@
     },
     {
       title: "Skills move by stages",
-      text: "An exercise, a test, or a project adds a mark on every skill it touches, and one piece of work can move several fields at once. The line fills to the furthest stage reached. Algebra, writing, mechanics, and ethics are the skills everyone carries forward. A stage is a place on that line. Reaching it does not certify the student.",
+      text: "An exercise, a test, or a project adds a mark on every skill it touches, and one piece of work can move several fields at once. The line fills to the furthest stage reached. A stage is also the points: emerging is 1, developing is 2, proficient is 3, and advanced is 4. An action can place up to 4 points on each skill it is built to elicit. Algebra, writing, mechanics, and ethics are the skills everyone carries forward. Reaching a stage does not certify the student.",
     },
     {
       title: "The panel is shared",
