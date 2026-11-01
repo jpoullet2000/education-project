@@ -7,7 +7,7 @@
   const A = globalThis.ATELIER;
   const KEY = "continuum-atelier-v1";
 
-  const ROUTES = ["model", "panel", "map", "projects", "workshops", "activities", "library", "cohort", "report"];
+  const ROUTES = ["dashboard", "fields", "model", "panel", "map", "projects", "workshops", "activities", "library", "cohort", "report"];
 
   function blank() {
     return {
@@ -20,7 +20,7 @@
       field: "all",
       skill: "all",
       medium: "all",
-      route: "model",
+      route: "dashboard",
       param: "",
       logs: [],
       challenges: [],
@@ -605,10 +605,17 @@ function levelLabel(n) {
   }
 
   function readRoute() {
-    const raw = (location.hash || "#model").replace(/^#/, "");
+    const raw = (location.hash || "#dashboard").replace(/^#/, "");
     const [route, param] = raw.split("/");
-    if (!ROUTES.includes(route)) return { route: "model", param: "" };
+    if (!ROUTES.includes(route)) return { route: "dashboard", param: "" };
     return { route, param: param || "" };
+  }
+
+  function rememberField(route) {
+    if (route.route === "fields" && field(route.param)) {
+      state.field = route.param;
+      state.skill = "all";
+    }
   }
 
   function health() {
@@ -1208,13 +1215,13 @@ function levelLabel(n) {
       <div class="grid-2">${decisions}</div>
       <h3 class="section-title">Five layers, from the field to the panel</h3>
       <div class="layers">${layers}</div>
-      <h3 class="section-title">Open the atelier</h3>
-      <p class="muted">The role switch inhabits the same record as a student, a mentor, or the director. Notes you add stay in this browser.</p>
+      <h3 class="section-title">Open a dashboard</h3>
+      <p class="muted">A student opens the student dashboard. A mentor opens the mentor dashboard. The director reads both. Notes you add stay in this browser.</p>
       <div class="doors">
-        <button type="button" class="primary" data-action="enter" data-role="student" data-student="amina" data-competency="PE" data-route="panel">Open Amina’s panel</button>
-        <button type="button" data-action="enter" data-role="mentor" data-mentor="ibarra" data-student="jun" data-route="panel">See Jun as Jun’s mentor</button>
-        <button type="button" data-action="enter" data-role="director" data-route="cohort">Open the cohort as director</button>
-        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="panel">See how projects move Noor’s skills</button>
+        <button type="button" class="primary" data-action="enter" data-role="student" data-student="amina" data-competency="PE" data-route="dashboard">Open Amina’s dashboard</button>
+        <button type="button" data-action="enter" data-role="mentor" data-mentor="ibarra" data-student="jun" data-route="dashboard">Open Ibarra’s mentor dashboard</button>
+        <button type="button" data-action="enter" data-role="director" data-route="dashboard">Open both dashboards as director</button>
+        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="dashboard">Open Noor’s dashboard</button>
       </div>
     </article>`;
   }
@@ -1920,7 +1927,7 @@ function levelLabel(n) {
         </header>
         <div class="doors">
           <button type="button" class="primary" data-action="enter" data-role="director" data-route="cohort">Continue as director</button>
-          <a href="#panel">Back to the panel</a>
+          <a href="#dashboard">Back to the dashboard</a>
         </div>
       </article>`;
     }
@@ -2060,7 +2067,195 @@ function levelLabel(n) {
     </article>`;
   }
 
+  function linePoints(personRecord) {
+    return A.competencies.reduce((sum, claim) => sum + (levelOf(personRecord.id, claim.id) || 0), 0);
+  }
+
+  function fieldBundle(fieldId) {
+    const skills = A.competencies.filter((claim) => claim.field === fieldId);
+    const materials = allMaterials().filter((item) => materialFields(item).includes(fieldId));
+    const workshops = A.workshops.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId));
+    const projects = A.projects.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId));
+    return { skills, materials, workshops, projects };
+  }
+
+  function fieldCards(personRecord) {
+    return A.fields.map((item) => {
+      const bundle = fieldBundle(item.id);
+      const started = bundle.skills.filter((claim) => levelOf(personRecord.id, claim.id) != null).length;
+      return `<a class="card field-card field-${item.id}" href="#fields/${item.id}">
+        <p class="eyebrow">Field</p>
+        <h3>${esc(item.name)}</h3>
+        <p>${esc(item.blurb)}</p>
+        <p class="meta">${started} of ${bundle.skills.length} skills have evidence for ${esc(firstName(personRecord))}.</p>
+        <p class="meta">${bundle.materials.length} materials · ${bundle.workshops.length} workshops · ${bundle.projects.length} projects</p>
+      </a>`;
+    }).join("");
+  }
+
+  function nextList(personRecord) {
+    const savedField = state.field;
+    const savedSkill = state.skill;
+    state.field = "all";
+    state.skill = "all";
+    let rows = [];
+    try {
+      rows = activityBoard(personRecord);
+    } finally {
+      state.field = savedField;
+      state.skill = savedSkill;
+    }
+    const picked = rows.filter((row) => row.phase === "soon" || (row.phase === "todo" && row.kind === "Workshop")).slice(0, 4);
+    if (!picked.length) return `<p>Nothing is in progress. <a href="#activities">Activities</a> lists what is closed and what is still open.</p>`;
+    return `<ul class="point-mini">${picked.map((row) => `<li>
+      <span><a href="${esc(row.href)}">${esc(row.name)}</a> · ${esc(row.kind)}</span>
+      <b>${esc(row.points)}</b>
+      <small>${esc(row.detail)}</small>
+    </li>`).join("")}</ul>`;
+  }
+
+  function studentDashInner(personRecord) {
+    const points = linePoints(personRecord);
+    const pieces = evidenceFor(personRecord.id).length;
+    const mentor = person(personRecord.mentorId);
+    return `<header class="page-head">
+        <p class="eyebrow">Student dashboard</p>
+        <h2>${esc(personRecord.name)}</h2>
+        <p class="lede">${esc(situation(personRecord))} ${esc(mediaSentence(personRecord))}</p>
+      </header>
+      <div class="panel-top">
+        ${flagHTML(personRecord)}
+        <p class="meta">Mentor of record: ${esc(mentor.name)}</p>
+      </div>
+      <p>${esc(recommendation(personRecord))}</p>
+      <div class="stat-row">
+        <div class="stat"><b>${points}</b><span>${points === 1 ? "point on the skill lines" : "points on the skill lines"}</span></div>
+        <div class="stat"><b>${pieces}</b><span>${pieces === 1 ? "piece of scored work" : "pieces of scored work"}</span></div>
+      </div>
+      <h3 class="section-title">Fields</h3>
+      <p class="muted">Open a field to see its materials, workshops, and projects, and the points each one can place.</p>
+      <div class="grid-2">${fieldCards(personRecord)}</div>
+      <h3 class="section-title">Next</h3>
+      ${nextList(personRecord)}
+      <div class="doors">
+        <a class="btn primary" href="#fields">Browse fields</a>
+        <a class="btn" href="#library">Materials</a>
+        <a class="btn" href="#workshops">Workshops</a>
+        <a class="btn" href="#projects">Projects</a>
+        <a class="btn" href="#activities">Activities</a>
+        <a class="btn" href="#panel">Record</a>
+        <a class="btn quiet" href="#model">How credit works</a>
+      </div>`;
+  }
+
+  function menteeCard(personRecord) {
+    const points = linePoints(personRecord);
+    const last = lastEvidenceItem(personRecord.id);
+    const pointsText = points ? `${pointsLabel(points)} on the skill lines.` : "No points on the skill lines yet.";
+    const lastText = last ? ` Latest work ${formatDate(last.date)}.` : "";
+    return `<article class="card">
+      ${flagHTML(personRecord)}
+      <h3>${esc(personRecord.name)}</h3>
+      <p>${esc(situation(personRecord))}</p>
+      <p class="meta">${esc(pointsText + lastText)}</p>
+      <p>${esc(recommendation(personRecord))}</p>
+      <p><a href="#panel" data-action="open-student" data-id="${personRecord.id}">Open the record</a></p>
+    </article>`;
+  }
+
+  function mentorDashInner(mentorId) {
+    const mentor = person(mentorId);
+    const mentees = A.students.filter((item) => item.mentorId === mentorId);
+    const cards = mentees.map(menteeCard).join("");
+    return `<section class="dash-block" data-mentor="${esc(mentorId)}">
+      <header class="page-head">
+        <p class="eyebrow">Mentor dashboard · ${esc(mentor.domain)}</p>
+        <h2>${esc(mentor.name)}</h2>
+        <p class="lede">${mentees.length === 1 ? "1 student." : `${mentees.length} students.`} The tabs are the same ones a student uses: fields, materials, workshops, projects, activities, and the record.</p>
+      </header>
+      <div class="grid-2">${cards || `<p class="empty">No students on this dashboard.</p>`}</div>
+    </section>`;
+  }
+
+  function renderDashboard() {
+    if (state.role === "student") {
+      const personRecord = current();
+      return `<article class="page" data-page="dashboard" data-student="${personRecord.id}">${studentDashInner(personRecord)}</article>`;
+    }
+    if (state.role === "mentor") {
+      return `<article class="page" data-page="dashboard">${mentorDashInner(state.mentorId)}</article>`;
+    }
+    const mentors = ["ibarra", "adeyemi", "vogel"].map((id) => mentorDashInner(id)).join("");
+    return `<article class="page" data-page="dashboard">
+      <header class="page-head">
+        <p class="eyebrow">Director · ${esc(person("ortega").name)}</p>
+        <h2>The student dashboard and the mentor dashboards.</h2>
+        <p class="lede">This unit opens two dashboards. One belongs to the student. One belongs to the mentor. ${esc(person("ortega").name)} reads both. The tabs along the top are the same from either one.</p>
+      </header>
+      ${studentDashInner(current())}
+      <h3 class="section-title">Mentor dashboards</h3>
+      ${mentors}
+      <p><a href="#cohort">Open the cohort table</a></p>
+    </article>`;
+  }
+
+  function activeFieldId() {
+    if (field(state.param)) return state.param;
+    if (state.field !== "all" && field(state.field)) return state.field;
+    const claim = competency(state.competencyId);
+    return claim ? claim.field : A.fields[0].id;
+  }
+
+  function renderFields() {
+    const personRecord = current();
+    const fieldId = activeFieldId();
+    const item = field(fieldId);
+    const bundle = fieldBundle(fieldId);
+    const tabs = A.fields.map((row) => `<a class="field-${row.id}" href="#fields/${row.id}"${row.id === fieldId ? ' aria-current="page"' : ""}>${esc(row.name)}</a>`).join("");
+    const skills = bundle.skills.map((claim) => {
+      const level = levelOf(personRecord.id, claim.id);
+      return `<article class="card field-${item.id}">
+        <h3><button type="button" class="text-btn" data-action="select-competency" data-id="${claim.id}">${esc(claim.name)}</button></h3>
+        <p class="level-line">${meter(level, item.id)} <span>${esc(levelLabel(level))}</span></p>
+        <p class="meta">${esc(stagePointsSentence(level))}</p>
+        <p>${esc(claim.claim)}</p>
+      </article>`;
+    }).join("");
+    const materials = bundle.materials.map((row) => `<li>
+      <span>${esc(mediaLabel(row.medium))} · ${esc(row.title)}</span>
+      <b>0 points</b>
+    </li>`).join("");
+    const workshops = bundle.workshops.map((row) => `<li>
+      <span><a href="#workshops">${esc(row.name)}</a> · ${esc(row.kind)}</span>
+      <b>${esc(offerPhrase(row.elicits))}</b>
+    </li>`).join("");
+    const projects = bundle.projects.map((row) => `<li>
+      <span><a href="#projects/${row.id}">${esc(row.name)}</a></span>
+      <b>${esc(offerPhrase(row.elicits))}</b>
+    </li>`).join("");
+    return `<article class="page" data-page="fields" data-field="${item.id}" data-student="${personRecord.id}">
+      <header class="page-head">
+        <p class="eyebrow">Fields · ${esc(personRecord.name)}</p>
+        <h2>${esc(item.name)}</h2>
+        <p class="lede">${esc(item.blurb)} Levels on this page are ${esc(firstName(personRecord))}’s. Materials are worth 0 points. Workshops and projects list the points they can place.</p>
+      </header>
+      <nav class="field-tabs" aria-label="Fields">${tabs}</nav>
+      <p><a href="#map">Open the map of every subject</a></p>
+      <h3 class="section-title">Skills</h3>
+      <div class="grid-2">${skills}</div>
+      <h3 class="section-title">Materials</h3>
+      ${materials ? `<ul class="point-mini">${materials}</ul>` : `<p class="muted">No material in this field yet.</p>`}
+      <p><a href="#library" data-action="open-field" data-id="${item.id}" data-route="library">Open the shelf filtered to ${esc(item.name)}</a></p>
+      <h3 class="section-title">Workshops</h3>
+      ${workshops ? `<ul class="point-mini">${workshops}</ul>` : `<p class="muted">No workshop elicits a skill in this field.</p>`}
+      <h3 class="section-title">Projects</h3>
+      ${projects ? `<ul class="point-mini">${projects}</ul>` : `<p class="muted">No project elicits a skill in this field.</p>`}
+    </article>`;
+  }
+
   function page() {
+    if (state.route === "dashboard") return renderDashboard();
+    if (state.route === "fields") return renderFields();
     if (state.route === "model") return renderModel();
     if (state.route === "panel") return renderPanel();
     if (state.route === "map") return renderMap();
@@ -2070,22 +2265,37 @@ function levelLabel(n) {
     if (state.route === "library") return renderLibrary();
     if (state.route === "cohort") return renderCohort();
     if (state.route === "report") return renderReport();
-    return renderModel();
+    return renderDashboard();
   }
 
   function pageTitle() {
+    const fieldName = field(activeFieldId());
     const titles = {
+      dashboard: state.role === "mentor" ? "Mentor dashboard" : state.role === "director" ? "Dashboards" : "Student dashboard",
+      fields: fieldName ? fieldName.name : "Fields",
       model: "The model",
       panel: current().name,
       map: "Competency map",
       projects: state.param && project(state.param) ? project(state.param).name : "Projects",
       workshops: "Workshops",
       activities: "Activities",
-      library: "Library",
+      library: "Materials",
       cohort: "Cohort",
       report: "Report",
     };
     return titles[state.route] || "Continuum";
+  }
+
+  function navItems() {
+    return [
+      ["dashboard", "Dashboard"],
+      ["fields", "Fields"],
+      ["library", "Materials"],
+      ["workshops", "Workshops"],
+      ["projects", "Projects"],
+      ["activities", "Activities"],
+      ["panel", "Record"],
+    ];
   }
 
   function whoHTML() {
@@ -2116,12 +2326,14 @@ function levelLabel(n) {
   }
 
   function renderChrome() {
-    document.querySelectorAll("#nav a").forEach((link) => {
-      const on = link.dataset.route === state.route;
-      if (on) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
-      if (link.dataset.route === "cohort") link.hidden = state.role === "student";
-    });
+    const nav = document.getElementById("nav");
+    if (nav) {
+      const currentRoute = state.route === "map" ? "fields" : state.route;
+      nav.innerHTML = navItems().map(([route, label]) => {
+        const on = currentRoute === route;
+        return `<a href="#${route}" data-route="${route}"${on ? ' aria-current="page"' : ""}>${label}</a>`;
+      }).join("");
+    }
     const who = document.getElementById("who");
     if (who) who.innerHTML = whoHTML();
     document.title = `${pageTitle()} · Continuum`;
@@ -2199,11 +2411,17 @@ function levelLabel(n) {
     if (action === "set-role") {
       state.role = node.dataset.role;
       persist();
-      if (state.role === "student" && state.route === "cohort") {
-        go("panel");
-        return;
+      go("dashboard");
+      return;
+    }
+    if (action === "open-field") {
+      event.preventDefault();
+      if (field(node.dataset.id)) {
+        state.field = node.dataset.id;
+        state.skill = "all";
       }
-      render();
+      persist();
+      go(node.dataset.route || "library");
       return;
     }
     if (action === "enter") {
@@ -2484,15 +2702,17 @@ function levelLabel(n) {
       return;
     }
     load();
-    if (!location.hash) history.replaceState(null, "", "#model");
+    if (!location.hash) history.replaceState(null, "", "#dashboard");
     const route = readRoute();
     state.route = route.route;
     state.param = route.param;
+    rememberField(route);
     render({ scroll: "top" });
     window.addEventListener("hashchange", () => {
       const next = readRoute();
       state.route = next.route;
       state.param = next.param;
+      rememberField(next);
       libraryNotice = "";
       render({ scroll: "top" });
     });
