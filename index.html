@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Continuum — learning atelier</title>
+  <meta name="description" content="Continuum is a competency atelier: open materials, interdisciplinary projects, and a monitoring panel shared by student, mentor, and director.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%23e6e0d4' width='32' height='32'/%3E%3Cpath d='M6 24 L16 8 L26 24' fill='none' stroke='%231b1916' stroke-width='1.6'/%3E%3Ccircle cx='6' cy='24' r='2.2' fill='%232c4578'/%3E%3Ccircle cx='16' cy='8' r='2.2' fill='%231c5e52'/%3E%3Ccircle cx='26' cy='24' r='2.2' fill='%23a3482a'/%3E%3C/svg%3E">
+</head>
+<body>
+  <a class="skip" href="#app">Skip to content</a>
+  <header class="mast">
+    <a class="brand" href="#model">
+      <svg viewBox="0 0 36 24" aria-hidden="true">
+        <path d="M5 20 L18 5 L31 20" fill="none" stroke="currentColor" stroke-width="1.4"></path>
+        <circle cx="5" cy="20" r="2.3" fill="currentColor"></circle>
+        <circle cx="18" cy="5" r="2.3" fill="currentColor"></circle>
+        <circle cx="31" cy="20" r="2.3" fill="currentColor"></circle>
+      </svg>
+      <span>
+        <strong>Continuum</strong>
+        <em>Learning atelier</em>
+      </span>
+    </a>
+    <nav class="nav" id="nav" aria-label="Primary">
+      <a href="#model" data-route="model">The model</a>
+      <a href="#panel" data-route="panel">Panel</a>
+      <a href="#map" data-route="map">Map</a>
+      <a href="#projects" data-route="projects">Projects</a>
+      <a href="#workshops" data-route="workshops">Workshops</a>
+      <a href="#library" data-route="library">Library</a>
+      <a href="#cohort" data-route="cohort">Cohort</a>
+    </nav>
+    <div class="who" id="who"></div>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <footer class="site-foot">
+    <p>Sample cohort, fixed to 1 November 2026. Materials are open. A level changes only when a work product is scored. The student sees the same record as the mentor and the director.</p>
+    <button type="button" class="btn quiet" data-action="reset">Clear notes saved in this browser</button>
+  </footer>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
