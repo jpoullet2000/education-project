@@ -364,12 +364,18 @@ figure { margin: 0; }
 }
 .network .node { cursor: pointer; }
 .network .node .label { font-size: 12px; }
-.network .node .lv {
-  font-size: 14px;
-  font-weight: 650;
+.network .stage {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 3.4;
+  stroke-linecap: round;
   pointer-events: none;
 }
-.network .node .lv.is-light { fill: var(--paper-2); }
+.network .stage.is-on { stroke: var(--c); }
+.network .node.is-unobserved .stage { stroke-dasharray: 1.4 2.4; stroke: var(--c); }
+.network .contrib { fill: var(--c); stroke: var(--paper-2); stroke-width: 0.6; }
+.network .field-bar .rail { fill: var(--line); }
+.network .field-bar .fill { fill: var(--c); }
 .network .edge { fill: none; stroke: var(--line-strong); stroke-width: 1.15; }
 .network .edge.is-hot { stroke: var(--hot, var(--ink)); stroke-width: 1.8; }
 .network .edge.is-quiet { opacity: 0.28; }
@@ -395,8 +401,8 @@ figure { margin: 0; }
 .seals { list-style: none; padding: 0; margin: 0.45rem 0 0.35rem; display: grid; gap: 0.35rem; }
 .seal {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.5rem;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.5rem;
   align-items: center;
   width: 100%;
   text-align: left;
@@ -417,7 +423,18 @@ figure { margin: 0; }
 .seal.is-met .mark { background: var(--c); }
 .seal.is-partial .mark { background: color-mix(in srgb, var(--c) 48%, transparent); }
 .seal.is-empty .mark { border-style: dashed; background: transparent; }
-.seal .lv { color: var(--ink-soft); font-size: 0.82rem; }
+.seal .meter { grid-column: 1 / -1; }
+.seal .lv { color: var(--ink-soft); font-size: 0.82rem; justify-self: end; }
+.trail { list-style: none; padding: 0; margin: 0.35rem 0 0.6rem; display: grid; gap: 0.55rem; }
+.trail li { border-left: 3px solid var(--c, var(--line-strong)); padding-left: 0.55rem; }
+.trail .stage-name {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.trail p { margin: 0.1rem 0; }
 
 .meter { display: inline-flex; gap: 3px; vertical-align: middle; }
 .meter i {

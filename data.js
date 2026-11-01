@@ -16,8 +16,8 @@
     { n: 0, label: "Unobserved", hint: "No evidence yet. This is not a low score." },
     { n: 1, label: "Emerging", hint: "A first attempt is on the record." },
     { n: 2, label: "Developing", hint: "The work is real and not yet secure." },
-    { n: 3, label: "Proficient", hint: "Meets the shared standard. This is the floor gate." },
-    { n: 4, label: "Advanced", hint: "Secure enough to stretch the claim or teach it." },
+    { n: 3, label: "Proficient", hint: "A secure stage. Later work can still move the skill." },
+    { n: 4, label: "Advanced", hint: "The skill has been stretched, and further work can still add a mark." },
   ];
 
   const fields = [
@@ -1047,7 +1047,7 @@
       id: "caf",
       n: "03",
       name: "Conceptual assessment framework",
-      text: "Three models. The competency model is the map. The evidence model is the rubric plus the update rule: the latest observation sets the level. The task model is the project or the workshop. This application is that framework, running on a cohort.",
+      text: "Three models. The competency model is the map. The evidence model is the rubric plus the update rule: every scored piece of work adds a mark, and the line fills to the furthest stage. The task model is the project or the workshop. This application is that framework, running on a cohort.",
     },
     {
       id: "implementation",
@@ -1069,12 +1069,12 @@
       text: "Projects and workshops are tasks. They elicit evidence. They are not courses you pass by finishing the weeks. Materials are open to anyone. A score requires an observation.",
     },
     {
-      title: "The floor is conjunctive",
-      text: "Algebra, writing, mechanics, and ethics each have to reach Proficient. A strong calculus paper does not fill an ethics gate that is still emerging. The panel can show the compensatory alternative. It does not use it.",
+      title: "Skills move by stages",
+      text: "An exercise, a test, or a project adds a mark on every skill it touches, and one piece of work can move several fields at once. The line fills to the furthest stage reached. Algebra, writing, mechanics, and ethics are the skills everyone carries forward. A stage is a place on that line. Reaching it does not certify the student.",
     },
     {
       title: "The panel is shared",
-      text: "Student, mentor, and director see the same record. A student can challenge a score. A challenge does not change the score. Advancement is a sentence a mentor or the director writes, after the floor is met.",
+      text: "Student, mentor, and director see the same lines. A student can challenge a mark. A challenge leaves the line as it is until someone scores the work again. A mentor may note that the shared skills are far enough along. That sentence is not a certificate.",
     },
   ];
 

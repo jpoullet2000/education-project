@@ -1,8 +1,8 @@
 /* Continuum atelier.
-   A level is the latest scored observation of that competency.
-   Unobserved is empty, not a failing mark. The floor is conjunctive.
-   Edges on the map join subjects to read together. They do not move a score.
-   The number in a disc is that student's level. */
+   A skill line fills to the furthest stage any scored work has reached.
+   Each exercise, test, or project adds a mark, and one piece of work can mark several skills.
+   Unobserved is an empty arc. It is not a low stage.
+   Edges on the map join subjects to read together. They do not move a stage. */
 (function () {
   const A = globalThis.ATELIER;
   const KEY = "continuum-atelier-v1";
@@ -97,28 +97,41 @@ function levelLabel(n) {
     return A.notes.filter((item) => item.studentId === studentId);
   }
 
-  function levelOf(studentId, competencyId) {
-    let best = null;
+  function historyOf(studentId, competencyId) {
+    const rows = [];
     for (const item of evidenceFor(studentId)) {
       const score = item.scores.find((entry) => entry.competencyId === competencyId);
       if (!score) continue;
-      if (!best || item.date > best.date || (item.date === best.date && item.id > best.id)) {
-        best = { date: item.date, id: item.id, level: score.level, evidence: item };
-      }
+      rows.push({ date: item.date, id: item.id, level: score.level, evidence: item });
     }
-    return best ? best.level : null;
+    rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id < b.id ? -1 : 1)));
+    return rows;
+  }
+
+  function levelOf(studentId, competencyId) {
+    const rows = historyOf(studentId, competencyId);
+    if (!rows.length) return null;
+    return rows.reduce((furthest, row) => Math.max(furthest, row.level), 0);
   }
 
   function latestOf(studentId, competencyId) {
-    let best = null;
-    for (const item of evidenceFor(studentId)) {
-      const score = item.scores.find((entry) => entry.competencyId === competencyId);
-      if (!score) continue;
-      if (!best || item.date > best.date || (item.date === best.date && item.id > best.id)) {
-        best = { evidence: item, score };
-      }
-    }
-    return best;
+    const rows = historyOf(studentId, competencyId);
+    if (!rows.length) return null;
+    const row = rows[rows.length - 1];
+    return { evidence: row.evidence, score: { competencyId, level: row.level } };
+  }
+
+  function fieldProgress(studentId, fieldId) {
+    const claims = A.competencies.filter((claim) => claim.field === fieldId);
+    const levels = claims.map((claim) => levelOf(studentId, claim.id)).filter((level) => level != null);
+    if (!levels.length) return null;
+    return levels.reduce((sum, level) => sum + level, 0) / levels.length;
+  }
+
+  function alsoMoved(item, competencyId) {
+    return item.scores
+      .map((score) => score.competencyId)
+      .filter((id) => id !== competencyId && competency(id));
   }
 
   function lastEvidenceItem(studentId) {
@@ -132,11 +145,6 @@ function levelLabel(n) {
   function meanFloor(personRecord) {
     const total = A.floorIds.reduce((sum, id) => sum + (levelOf(personRecord.id, id) ?? 0), 0);
     return total / A.floorIds.length;
-  }
-
-  function formatMean(n) {
-    const rounded = Math.round(n * 100) / 100;
-    return String(rounded);
   }
 
   function floorMet(personRecord) {
@@ -194,10 +202,10 @@ function levelLabel(n) {
     if (floorMet(personRecord) && decision && decision.decision === "endorse") {
       return { id: "endorsed", label: "Advancement endorsed" };
     }
-    if (floorMet(personRecord)) return { id: "ready", label: "Floor met, awaiting a person" };
+    if (floorMet(personRecord)) return { id: "ready", label: "Shared subjects are proficient" };
     const gap = primaryOpenFloor(personRecord);
-    const name = gap ? competency(gap.id).name : "the floor";
-    return { id: "open", label: `Floor open · ${name}` };
+    if (!gap) return { id: "open", label: "Skills still moving" };
+    return { id: "open", label: `${competency(gap.id).name} · ${levelLabel(levelOf(personRecord.id, gap.id)).toLowerCase()}` };
   }
 
   function mediaOf(personRecord) {
@@ -264,17 +272,17 @@ function levelLabel(n) {
     if (!floorMet(personRecord)) {
       const open = A.floorIds
         .filter((id) => (levelOf(personRecord.id, id) ?? 0) < A.gate)
-        .map((id) => `${competency(id).name} (${levelLabel(levelOf(personRecord.id, id)).toLowerCase()})`);
-      return `The floor is open on ${open.join("; ")}. The next scored work should be able to speak to ${open.length === 1 ? "that claim" : "those claims"}.`;
+        .map((id) => `${competency(id).name} is ${levelLabel(levelOf(personRecord.id, id)).toLowerCase()}`);
+      return `Along the shared subjects, ${open.join("; ")}. The next project can move ${open.length === 1 ? "that skill" : "those skills"}, and the same work can move others.`;
     }
     const soft = A.competencies.filter((item) => {
       const level = levelOf(personRecord.id, item.id);
       return !A.floorIds.includes(item.id) && level != null && level < A.gate;
     });
-    const softText = soft.length ? ` Still developing: ${soft.map((item) => item.name).join(", ")}.` : "";
-    if (flag.id === "endorsed") return `Advancement has been endorsed.${softText}`;
-    if (flag.id === "withheld") return `Advancement was withheld. The floor is met.${softText} A later decision can replace that sentence.`;
-    return `The floor is met.${softText} Endorsement is a person's decision, and ${name} can read it. The chart will not take it alone.`;
+    const softText = soft.length ? ` Still moving: ${soft.map((item) => item.name).join(", ")}.` : "";
+    if (flag.id === "endorsed") return `A mentor has noted that the shared subjects are far enough along.${softText}`;
+    if (flag.id === "withheld") return `A mentor has written that readiness waits.${softText} A later note can replace that sentence.`;
+    return `Algebra, writing, mechanics, and ethics have each reached proficient.${softText} Further work still adds marks. A mentor may note that these four are far enough along.`;
   }
 
   function namedList(ids) {
@@ -285,24 +293,14 @@ function levelLabel(n) {
 
   function floorCopy(personRecord) {
     const levels = A.floorIds.map((id) => levelOf(personRecord.id, id));
-    const openCount = levels.filter((level) => (level ?? 0) < A.gate).length;
-    const mean = formatMean(meanFloor(personRecord));
-    const comp = compensatoryMet(personRecord);
-    const name = firstName(personRecord);
-    const required = namedList(A.floorIds);
+    const bits = A.floorIds.map((id) => `${competency(id).name} is ${levelLabel(levelOf(personRecord.id, id)).toLowerCase()}`);
     let lead;
     if (levels.every((level) => level == null)) {
-      lead = `${personRecord.name} has no scored evidence. Empty marks mean unobserved. They are not a low score.`;
-    } else if (openCount === 0) {
-      lead = `${required} are all at least Proficient. That record does not by itself certify ${name}. A mentor or the director writes the endorsement, and ${name} can read it.`;
+      lead = `${personRecord.name} has no scored evidence. An empty arc means that skill has not been touched yet.`;
     } else {
-      const bits = A.floorIds
-        .filter((id) => (levelOf(personRecord.id, id) ?? 0) < A.gate)
-        .map((id) => `${competency(id).name} is ${levelLabel(levelOf(personRecord.id, id)).toLowerCase()}`);
-      lead = `${4 - openCount} of 4 required subjects are Proficient. ${bits.join(". ")}.`;
+      lead = `Each exercise, test, and project adds a mark on every skill it touches. One piece of work can move several skills in the same sitting. The arc fills to the furthest stage those marks have reached. ${bits.join(". ")}.`;
     }
-    const compare = `The rule in force is conjunctive: ${required} each at Proficient or better. ${name} ${openCount === 0 ? "meets" : "does not meet"} it. A compensatory comparison, kept visible and unused for decisions, takes the mean of the four levels, with unobserved counted as 0, and asks for at least 3. The mean is ${mean}. That comparison ${comp ? "would call the floor met" : "would leave the floor open"}.`;
-    return { lead, compare };
+    return { lead };
   }
 
   function situation(personRecord) {
@@ -432,6 +430,12 @@ function levelLabel(n) {
     expect(lv("jun", "MC") == null, "Jun calculus empty");
     expect(lv("jun", "PO") === 2, "Jun optics");
     expect(lv("jun", "MG") === 2, "Jun geometry");
+    const algebraTrail = historyOf("amina", "MA");
+    expect(algebraTrail.length >= 2, "Amina algebra trail");
+    expect(algebraTrail.some((row) => row.evidence.source === "workshop"), "Amina algebra workshop");
+    expect(algebraTrail.some((row) => row.evidence.source === "project"), "Amina algebra project");
+    const load = byId(A.evidence, "ev-amina-load");
+    expect(!!load && load.scores.length >= 3, "one project moves several skills");
     expect(lastEvidenceItem("jun").date === "2026-09-22", "Jun date");
     expect(daysSince("2026-09-22") === 40, "stale span");
     for (const item of A.evidence) {
@@ -511,6 +515,45 @@ function levelLabel(n) {
     return "";
   }
 
+  function stageArcs(level) {
+    const radius = 15.5;
+    const gap = 0.28;
+    const sweep = (Math.PI * 2) / 4;
+    let paths = "";
+    for (let stage = 1; stage <= 4; stage += 1) {
+      const start = -Math.PI / 2 + (stage - 1) * sweep + gap / 2;
+      const end = start + sweep - gap;
+      const x1 = (Math.cos(start) * radius).toFixed(2);
+      const y1 = (Math.sin(start) * radius).toFixed(2);
+      const x2 = (Math.cos(end) * radius).toFixed(2);
+      const y2 = (Math.sin(end) * radius).toFixed(2);
+      const on = level != null && stage <= level;
+      paths += `<path class="stage${on ? " is-on" : ""}" d="M ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2}"></path>`;
+    }
+    return paths;
+  }
+
+  function contribDots(history) {
+    const buckets = [[], [], [], []];
+    for (const item of history) buckets[item.level - 1].push(item);
+    const radius = 25;
+    const sweep = (Math.PI * 2) / 4;
+    let dots = "";
+    for (let stage = 1; stage <= 4; stage += 1) {
+      const marks = buckets[stage - 1];
+      const mid = -Math.PI / 2 + (stage - 0.5) * sweep;
+      marks.forEach((item, index) => {
+        const offset = (index - (marks.length - 1) / 2) * 0.16;
+        const angle = mid + offset;
+        const cx = (Math.cos(angle) * radius).toFixed(2);
+        const cy = (Math.sin(angle) * radius).toFixed(2);
+        const label = `${sourceLabel(item.evidence)} · ${item.evidence.title} · ${levelLabel(item.level)}`;
+        dots += `<circle class="contrib" cx="${cx}" cy="${cy}" r="2.3"><title>${esc(label)}</title></circle>`;
+      });
+    }
+    return dots;
+  }
+
   function renderNetwork(personRecord) {
     const selected = state.competencyId;
     const selectedClaim = competency(selected);
@@ -530,11 +573,23 @@ function levelLabel(n) {
     }).join("");
     const headers = A.fields.map((item) => {
       const x = A.competencies.find((claim) => claim.field === item.id).x;
-      return `<text class="col-label" x="${x}" y="28" text-anchor="middle">${esc(item.short)}</text>`;
+      const progress = fieldProgress(personRecord.id, item.id);
+      const width = 86;
+      const fill = progress == null ? 0 : Math.max(0, Math.min(width, (progress / 4) * width));
+      const started = A.competencies.filter((claim) => claim.field === item.id && levelOf(personRecord.id, claim.id) != null).length;
+      const total = A.competencies.filter((claim) => claim.field === item.id).length;
+      const title = progress == null
+        ? `${item.name}: no skill in this field has evidence yet`
+        : `${item.name}: ${started} of ${total} skills have evidence`;
+      return `<g class="field-bar field-${item.id}">
+        <text class="col-label" x="${x}" y="26" text-anchor="middle">${esc(item.short)}</text>
+        <rect class="rail" x="${x - width / 2}" y="36" width="${width}" height="6" rx="3"></rect>
+        ${fill > 0 ? `<rect class="fill" x="${x - width / 2}" y="36" width="${fill.toFixed(1)}" height="6" rx="3"><title>${esc(title)}</title></rect>` : ""}
+      </g>`;
     }).join("");
     const nodes = A.competencies.map((claim) => {
       const level = levelOf(personRecord.id, claim.id);
-      const opacity = level == null ? 0 : [0, 0.4, 0.62, 0.84, 1][level];
+      const history = historyOf(personRecord.id, claim.id);
       const quiet = claim.id !== selected && !neighborIds.has(claim.id);
       const classes = [
         "node",
@@ -543,29 +598,30 @@ function levelLabel(n) {
         quiet ? "is-quiet" : "",
         level == null ? "is-unobserved" : "",
       ].filter(Boolean).join(" ");
-      const dash = level == null ? 'stroke-dasharray="3 2.4"' : "";
-      const numeral = level == null
-        ? ""
-        : `<text class="lv${level === 4 ? " is-light" : ""}" text-anchor="middle" dy="0.35em">${level}</text>`;
-      return `<g class="${classes}" tabindex="0" role="button" aria-pressed="${claim.id === selected}" aria-label="${esc(claim.name)}, ${esc(levelLabel(level))}" data-action="select-competency" data-id="${claim.id}" transform="translate(${claim.x} ${claim.y})">
-        <circle class="hit" r="32" fill="transparent"></circle>
-        <circle r="20" fill="var(--paper-2)"></circle>
-        <circle r="20" fill="var(--c-${claim.field})" fill-opacity="${opacity}"></circle>
-        <circle class="ring" r="20" fill="none" stroke="var(--c-${claim.field})" stroke-width="1.7" ${dash}></circle>
-        ${numeral}
-        <text class="label" y="38" text-anchor="middle">${esc(claim.short)}</text>
+      const markCount = history.length === 1 ? "1 mark" : `${history.length} marks`;
+      const aria = level == null
+        ? `${claim.name}, no evidence yet`
+        : `${claim.name}, ${levelLabel(level)}, ${markCount}`;
+      return `<g class="${classes}" tabindex="0" role="button" aria-pressed="${claim.id === selected}" aria-label="${esc(aria)}" data-action="select-competency" data-id="${claim.id}" transform="translate(${claim.x} ${claim.y})">
+        <circle class="hit" r="36" fill="transparent"></circle>
+        <circle r="8" fill="var(--paper-2)"></circle>
+        <circle r="8" fill="var(--c-${claim.field})" fill-opacity="${level == null ? 0 : 0.35}"></circle>
+        ${stageArcs(level)}
+        ${contribDots(history)}
+        <circle class="ring" r="20" fill="none" stroke="var(--c-${claim.field})" stroke-width="${claim.id === selected ? 1.8 : 0}"></circle>
+        <text class="label" y="42" text-anchor="middle">${esc(claim.short)}</text>
       </g>`;
     }).join("");
     return `<figure class="network">
-      <svg viewBox="0 0 900 540" role="img" aria-labelledby="net-title">
-        <title id="net-title">Progress map for ${esc(personRecord.name)}. Each number is a level from 1 to 4.</title>
+      <svg viewBox="0 0 900 560" role="img" aria-labelledby="net-title">
+        <title id="net-title">Skill lines for ${esc(personRecord.name)}. Each arc is a stage. Each dot is a piece of work.</title>
         ${edges}
         ${headers}
         ${nodes}
       </svg>
       <figcaption class="legend">
         ${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}
-        <span>The number is the level: 1 emerging, 2 developing, 3 proficient, 4 advanced. A dashed ring has no evidence yet. Lines join subjects to read together. Algebra, writing, mechanics, and ethics are required of everyone.</span>
+        <span>Four arcs are the stages: emerging, developing, proficient, advanced. The fill stops at the furthest stage reached. Each dot is an exercise, a test, or a project, and one piece of work can dot several skills. A dashed arc has no evidence yet. The bar under a field follows the skills in that field that already have evidence. Lines join subjects to read together.</span>
       </figcaption>
     </figure>`;
   }
@@ -574,13 +630,34 @@ function levelLabel(n) {
     return `<ol class="seals">${A.floorIds.map((id) => {
       const claim = competency(id);
       const level = levelOf(personRecord.id, id);
-      const mode = level == null ? "is-empty" : level >= A.gate ? "is-met" : "is-partial";
-      return `<li><button type="button" class="seal field-${claim.field} ${mode} ${state.competencyId === id ? "is-selected" : ""}" data-action="select-competency" data-id="${id}">
-        <span class="mark" aria-hidden="true"></span>
+      const marks = historyOf(personRecord.id, id).length;
+      const count = marks === 0 ? "No marks" : marks === 1 ? "1 mark" : `${marks} marks`;
+      return `<li><button type="button" class="seal field-${claim.field} ${state.competencyId === id ? "is-selected" : ""}" data-action="select-competency" data-id="${id}">
         <span>${esc(claim.name)}</span>
-        <span class="lv">${esc(levelLabel(level))}</span>
+        ${meter(level, claim.field)}
+        <span class="lv">${esc(levelLabel(level))} · ${count}</span>
       </button></li>`;
     }).join("")}</ol>`;
+  }
+
+  function trail(personRecord, claim) {
+    const rows = historyOf(personRecord.id, claim.id);
+    if (!rows.length) {
+      return `<p>No mark on this skill yet. An empty line is waiting for an exercise, a test, or a project.</p>`;
+    }
+    const items = rows.map((row) => {
+      const others = alsoMoved(row.evidence, claim.id).map((id) => competency(id).name);
+      const together = others.length
+        ? `<p class="meta">Also moved ${esc(others.join(", "))}.</p>`
+        : "";
+      return `<li class="field-${claim.field}">
+        <p class="stage-name">${esc(levelLabel(row.level))}</p>
+        <p><button type="button" class="text-btn" data-action="jump" data-id="${row.evidence.id}">${esc(row.evidence.title)}</button></p>
+        <p class="meta">${esc(formatDate(row.date))} · ${esc(sourceLabel(row.evidence))}</p>
+        ${together}
+      </li>`;
+    }).join("");
+    return `<ol class="trail">${items}</ol>`;
   }
 
   function evidenceCard(item) {
@@ -694,7 +771,7 @@ function levelLabel(n) {
           <button type="submit" class="primary">Add to the panel</button>
           <button type="button" data-action="endorse" ${met && !already ? "" : "disabled"}>Endorse advancement</button>
         </div>
-        <p class="muted">${met ? "The floor is met. Endorsement is still a sentence you write, not a button the chart presses." : "Endorsement stays unavailable while any floor competency is below Proficient."}</p>
+        <p class="muted">${met ? "Algebra, writing, mechanics, and ethics have each reached proficient. Noting readiness is a sentence you write. The lines do not write it." : "Noting readiness waits until algebra, writing, mechanics, and ethics have each reached proficient. The lines stay visible while those skills are still moving."}</p>
       </form>`;
   }
 
@@ -709,8 +786,8 @@ function levelLabel(n) {
       ? `<p class="meta">${decision.decision === "endorse" ? "Endorsed" : "Withheld"} by ${esc(decision.actor)} on ${esc(formatWhen(decision.at))}.</p>`
       : "";
     const latestHTML = latest
-      ? `<p><button type="button" class="text-btn" data-action="jump" data-id="${latest.evidence.id}">${esc(latest.evidence.title)}</button> · ${esc(formatDate(latest.evidence.date))} · ${esc(levelLabel(latest.score.level))}.</p><p class="muted">${esc(latest.evidence.rubric)}</p>`
-      : `<p>No observation of this subject yet. Unobserved is not a low score.</p>`;
+      ? `<p>Furthest stage on the line: ${esc(levelLabel(level))}. Most recent mark: <button type="button" class="text-btn" data-action="jump" data-id="${latest.evidence.id}">${esc(latest.evidence.title)}</button> · ${esc(formatDate(latest.evidence.date))} · ${esc(levelLabel(latest.score.level))}.</p><p class="muted">${esc(latest.evidence.rubric)}</p>`
+      : `<p>No mark on this skill yet. An empty arc is not a low stage.</p>`;
     const related = neighbors(claim.id).map((id) => {
       const other = competency(id);
       return `<button type="button" class="text-btn" data-action="select-competency" data-id="${id}">${esc(other.name)}</button>`;
@@ -732,12 +809,11 @@ function levelLabel(n) {
       <div class="panel-grid">
         ${renderNetwork(personRecord)}
         <aside class="inspector">
-          <p class="eyebrow">Merit chart · conjunctive floor</p>
-          <h3>${esc(floorMet(personRecord) ? "Floor met" : evidence.length ? "Floor open" : "No evidence yet")}</h3>
+          <p class="eyebrow">Skill lines</p>
+          <h3>${esc(evidence.length ? "How far the skills have come" : "No evidence yet")}</h3>
           <p>${esc(copy.lead)}</p>
           ${seals(personRecord)}
           ${decisionLine}
-          <p class="muted">${esc(copy.compare)}</p>
           <div>
             <p class="eyebrow">Selected subject</p>
             <h3 class="field-${claim.field}">${esc(claim.name)}</h3>
@@ -745,7 +821,8 @@ function levelLabel(n) {
             <p>${esc(claim.claim)}</p>
             <p class="eyebrow">What counts as evidence</p>
             <ul class="rules">${claim.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>
-            <p class="eyebrow">Latest observation</p>
+            <p class="eyebrow">Marks on this line, in order</p>
+            ${trail(personRecord, claim)}
             ${latestHTML}
             <p class="eyebrow">Read together with</p>
             <p>${related || "This claim stands on its own in the map."}</p>
@@ -758,7 +835,7 @@ function levelLabel(n) {
         </aside>
       </div>
       <h3 class="section-title">Evidence</h3>
-      <p class="muted">Newest first. The level on the chart is the latest score for that claim. Earlier scores stay here.</p>
+      <p class="muted">Newest first. Each piece of work stays on every skill it moved. The arc shows the furthest stage.</p>
       <div class="tape">${evidence.length ? evidence.map(evidenceCard).join("") : `<p class="empty">No scored evidence. Workshop notes below, when they exist, do not change a level.</p>`}</div>
       <h3 class="section-title">Notes that do not move a score</h3>
       <div class="tape">${notes.length ? notes.map(noteCard).join("") : `<p class="muted">No unscored notes.</p>`}</div>
@@ -816,7 +893,7 @@ function levelLabel(n) {
       <div class="ecd-col col-evidence">
         <p class="eyebrow">02 · Evidence model</p>
         <h3>What we accept</h3>
-        <p>Work already scored on Coastal Crossing. Rubrics turn the work into a level. The latest level is the one on the panel.</p>
+        <p>Work already scored on Coastal Crossing. One piece of work can mark several skills. Each mark stays on those lines.</p>
         <div class="chip-list">${evidenceChips}</div>
       </div>
       <div class="gutter" aria-hidden="true"><span>design</span><b>→</b><span>read back</span><b>←</b></div>
@@ -849,7 +926,7 @@ function levelLabel(n) {
       ${ecdBoard()}
       <div class="rule">
         <p class="eyebrow">Update rule</p>
-        <p>The latest scored observation of a claim becomes the level. Older observations stay on the tape. Unobserved stays empty. Lines on the map mark claims a mentor should read together. A line does not change a number. There is no hidden average.</p>
+        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage.</p>
       </div>
       <h3 class="section-title">Decisions already in force</h3>
       <div class="grid-3">${decisions}</div>
@@ -861,7 +938,7 @@ function levelLabel(n) {
         <button type="button" class="primary" data-action="enter" data-role="student" data-student="amina" data-competency="PE" data-route="panel">Open Amina’s panel</button>
         <button type="button" data-action="enter" data-role="mentor" data-mentor="ibarra" data-student="jun" data-route="panel">See Jun as Jun’s mentor</button>
         <button type="button" data-action="enter" data-role="director" data-route="cohort">Open the cohort as director</button>
-        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="panel">Compare the two scoring rules on Noor</button>
+        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="panel">See how projects move Noor’s skills</button>
       </div>
     </article>`;
   }
@@ -898,7 +975,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Competency model</p>
         <h2>The map of subjects.</h2>
-        <p class="lede">Thirteen subjects across mathematics, English, physics, and philosophy. A line is where two of them meet. The number in each disc is ${esc(firstName(personRecord))}’s level. Switch the student in the header to read someone else onto the same map.</p>
+        <p class="lede">Thirteen subjects across mathematics, English, physics, and philosophy. The arc on each subject is how far that skill has come, and each dot is work that moved it. The bar under a field follows the skills in that field that already have evidence. Switch the student in the header to read someone else onto the same map.</p>
       </header>
       ${renderNetwork(personRecord)}
       <div class="map-groups">${groups}</div>
@@ -1000,7 +1077,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Intake</p>
         <h2>Workshops before a seat.</h2>
-        <p class="lede">New students begin in workshops. The sampler is exploratory and carries no score. The diagnostic stations produce the first floor evidence, and they show a mentor where the first project needs a scaffold. A workshop is waived when the evidence is already on the record.</p>
+        <p class="lede">New students begin in workshops. The sampler is exploratory and carries no score. The diagnostic stations put the first marks on the skill lines, and they show a mentor where the first project needs a scaffold. A workshop is waived when the evidence is already on the record.</p>
       </header>
       <div class="grid-2">${cards}</div>
       <h3 class="section-title">Who is still in the sequence</h3>
@@ -1076,20 +1153,17 @@ function levelLabel(n) {
       if (diff) return diff;
       return a.name.localeCompare(b.name);
     });
-    const conj = A.students.filter(floorMet);
-    const compOnly = A.students.filter((item) => compensatoryMet(item) && !floorMet(item));
+    const moving = A.students.filter((item) => evidenceFor(item.id).length).length;
     const stale = A.students.filter((item) => attention(item).id === "stale");
     const body = rows.map((personRecord) => {
       const pips = A.floorIds.map((id) => pip(levelOf(personRecord.id, id), competency(id).field, `${competency(id).name}: ${levelLabel(levelOf(personRecord.id, id))}`)).join("");
       const last = lastEvidenceItem(personRecord.id);
       const lastText = last ? formatDate(last.date) : "None";
-      const conjWord = floorMet(personRecord) ? "Met" : "Open";
-      const compWord = compensatoryMet(personRecord) ? "Would meet" : "Would stay open";
+      const marks = evidenceFor(personRecord.id).length;
       return `<tr data-action="open-student" data-id="${personRecord.id}" data-student="${personRecord.id}">
         <td><button type="button" class="name-btn" data-action="open-student" data-id="${personRecord.id}">${esc(personRecord.name)}</button><br><span class="meta">${esc(person(personRecord.mentorId).name.replace(/^Dr\. |^Prof\. /, ""))}</span></td>
         <td><span class="pips">${pips}</span></td>
-        <td>${conjWord}</td>
-        <td>${compWord}</td>
+        <td>${marks}</td>
         <td>${esc(lastText)}</td>
         <td>${flagHTML(personRecord)}</td>
       </tr>`;
@@ -1103,24 +1177,21 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Director’s overview · ${esc(person("ortega").name)}</p>
         <h2>The cohort, one row at a time.</h2>
-        <p class="lede">Four pips are the subjects required of everyone, in order: algebra, writing, mechanics, ethics. A dashed pip is unobserved. The map shows every subject, the links between fields, and the level in each disc. Mentoring load is the constraint that used to be class size.</p>
+        <p class="lede">The four marks are algebra, writing, mechanics, and ethics, drawn as far as each skill has come. A dashed mark has no evidence yet. The map shows every skill, the links between fields, and the dots each project added. Mentoring load is the constraint that used to be class size.</p>
       </header>
       <div class="stat-row">
         <div class="stat"><b>${A.students.length}</b><span>students</span></div>
-        <div class="stat"><b>${conj.length}</b><span>conjunctive floor met</span></div>
-        <div class="stat"><b>${compOnly.length}</b><span>compensatory only</span></div>
+        <div class="stat"><b>${moving}</b><span>with marks on a skill line</span></div>
         <div class="stat"><b>${stale.length}</b><span>no recent evidence</span></div>
       </div>
-      <p>Conjunctive floor, in force: ${esc(conj.map((item) => item.name).join(", ") || "no one")}. A compensatory mean of at least 3 would also include ${esc(compOnly.map((item) => item.name).join(", ") || "no one else")}.</p>
       <div class="table-wrap">
         <table>
-          <caption>Floor and attention</caption>
+          <caption>Skill lines and attention</caption>
           <thead>
             <tr>
               <th scope="col">Student</th>
-              <th scope="col">Floor</th>
-              <th scope="col">Conjunctive</th>
-              <th scope="col">Compensatory</th>
+              <th scope="col">Shared subjects</th>
+              <th scope="col">Pieces of work</th>
               <th scope="col">Latest evidence</th>
               <th scope="col">Attention</th>
             </tr>
@@ -1138,15 +1209,17 @@ function levelLabel(n) {
     const evidence = evidenceFor(personRecord.id).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
     const floorLines = A.floorIds.map((id) => {
       const level = levelOf(personRecord.id, id);
-      const latest = latestOf(personRecord.id, id);
-      const via = latest ? ` Latest: ${latest.evidence.title}, ${formatDate(latest.evidence.date)}.` : "";
+      const trailRows = historyOf(personRecord.id, id);
+      const via = trailRows.length
+        ? " " + trailRows.map((row) => `${levelLabel(row.level)} in ${row.evidence.title} (${sourceLabel(row.evidence)}, ${formatDate(row.date)})`).join("; ") + "."
+        : "";
       return `${competency(id).name} — ${levelLabel(level)}.${via}`;
     });
     const evidenceLines = evidence.map((item) => `${formatDate(item.date)} — ${item.title} (${sourceLabel(item)}). ${item.rubric}`);
     const noteLines = notesFor(personRecord.id).map((item) => `${formatDate(item.date)} — ${item.text}`);
     const blocks = [
       `Continuum report\n${personRecord.name}`,
-      `Mentor of record: ${mentor.name}. Director: ${person("ortega").name}.\nCohort clock: ${formatDate(A.today)}. Rule in force: ${namedList(A.floorIds)} each at Proficient or better. The latest observation sets each level.`,
+      `Mentor of record: ${mentor.name}. Director: ${person("ortega").name}.\nCohort clock: ${formatDate(A.today)}. Each scored exercise, test, or project adds a mark on every skill it touches. The line shows the furthest stage reached. ${namedList(A.floorIds)} are the skills everyone carries forward.`,
       `${situation(personRecord)} ${mediaSentence(personRecord)}`,
       `Required subjects\n${floorLines.join("\n")}`,
       floorCopy(personRecord).lead,
@@ -1375,7 +1448,7 @@ function levelLabel(n) {
         id: "log-" + Date.now(),
         studentId: personRecord.id,
         kind: "endorse",
-        text: "Advancement endorsed. The floor is met, and a person has said so.",
+        text: "Readiness noted. Algebra, writing, mechanics, and ethics have each reached proficient, and a person has said so.",
         at,
         actor: actorName(),
       });
