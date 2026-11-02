@@ -292,6 +292,73 @@ a.field-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(28, 25, 23, 0.08);
 }
+.spark { display: block; width: 100%; height: 42px; margin-top: 0.55rem; }
+.spark-area { fill: var(--c, var(--ink)); opacity: 0.16; }
+.spark-line { fill: none; stroke: var(--c, var(--ink)); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark circle { fill: var(--c, var(--ink)); }
+
+.field-chart {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.95rem 1rem 0.85rem;
+  margin: 0.2rem 0 1.2rem;
+  max-width: 52rem;
+}
+.field-chart h3 { margin: 0; font-size: 1.35rem; }
+.chart-total { margin: 0.2rem 0 0.3rem; }
+.chart-total b {
+  font-family: var(--serif);
+  font-size: 2rem;
+  font-weight: 560;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--c, var(--ink));
+}
+.chart-total span { color: var(--ink-soft); }
+.chart-scroll { overflow-x: auto; margin-top: 0.55rem; }
+.chart-scroll svg { display: block; width: 100%; height: auto; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-area { fill: var(--c, var(--ink)); opacity: 0.14; pointer-events: none; }
+.chart-line { fill: none; stroke: var(--c, var(--ink)); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
+.field-dot { cursor: pointer; }
+.field-dot .hit { fill: transparent; }
+.field-dot .mark { fill: var(--paper-2); stroke: var(--c, var(--ink)); stroke-width: 2.5; }
+.field-dot[aria-pressed="true"] .mark { fill: var(--c, var(--ink)); stroke: var(--ink); stroke-width: 2; }
+.chart-when {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.3rem 0 0.15rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+.field-steps { list-style: none; padding: 0; margin: 0.45rem 0 0; display: grid; gap: 0.2rem; }
+.field-steps button {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr);
+  gap: 0.15rem 0.65rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  padding: 0.38rem 0.45rem;
+  font-weight: 450;
+}
+.field-steps button[aria-pressed="true"] { background: var(--paper); border-color: var(--line); }
+.field-steps b {
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 560;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.field-steps span { color: var(--ink-soft); font-size: 0.9rem; }
+.field-steps strong { color: var(--ink); font-weight: 560; }
 .dash-block + .dash-block { margin-top: 1.5rem; }
 .btn.primary, button.primary {
   background: var(--ink);

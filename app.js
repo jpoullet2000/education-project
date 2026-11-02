@@ -48,6 +48,7 @@
   let cloudFocus = "";
   let cloudStudentId = "";
   let offerCloudFocus = { parentId: "", skillId: "" };
+  let fieldMarkId = "";
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -175,6 +176,85 @@ function levelLabel(n) {
     const levels = claims.map((claim) => levelOf(studentId, claim.id)).filter((level) => level != null);
     if (!levels.length) return null;
     return levels.reduce((sum, level) => sum + level, 0) / levels.length;
+  }
+
+  function dayNumber(iso) {
+    return Date.parse(iso + "T12:00:00Z") / 86400000;
+  }
+
+  // Field points are the sum of the furthest stage on each skill.
+  // A later lower mark does not reduce the line, and a skill with no evidence adds nothing.
+  function fieldSeries(studentId, fieldId) {
+    const skills = A.competencies.filter((claim) => claim.field === fieldId);
+    const ids = new Set(skills.map((claim) => claim.id));
+    const events = evidenceFor(studentId)
+      .filter((item) => item.scores.some((score) => ids.has(score.competencyId)))
+      .slice()
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.id < b.id ? -1 : 1)));
+    const furthest = {};
+    const steps = [];
+    for (const item of events) {
+      const moved = [];
+      for (const score of item.scores) {
+        if (!ids.has(score.competencyId)) continue;
+        const before = furthest[score.competencyId] || 0;
+        if (score.level > before) {
+          furthest[score.competencyId] = score.level;
+          moved.push(score.competencyId);
+        }
+      }
+      const levels = {};
+      for (const claim of skills) levels[claim.id] = furthest[claim.id] || 0;
+      const total = skills.reduce((sum, claim) => sum + levels[claim.id], 0);
+      steps.push({ date: item.date, id: item.id, title: item.title, total, moved, levels });
+    }
+    return { skills, steps, ceiling: skills.length * 4 };
+  }
+
+  function chartDomain(steps) {
+    const first = dayNumber(steps[0].date);
+    const end = Math.max(dayNumber(A.today), first + 1);
+    const span = end - first;
+    const pad = span < 21 ? Math.max(7, 21 - span) : Math.max(3, Math.round(span * 0.06));
+    return { x0: first - pad, x1: end };
+  }
+
+  function placeXs(steps, domain, plotLeft, plotRight, minGap) {
+    const span = domain.x1 - domain.x0;
+    const xAt = (iso) => plotLeft + ((dayNumber(iso) - domain.x0) / span) * (plotRight - plotLeft);
+    const raw = steps.map((step) => xAt(step.date));
+    if (steps.length < 2) return raw;
+    const gaps = [];
+    for (let i = 1; i < steps.length; i++) gaps.push(Math.max(0, dayNumber(steps[i].date) - dayNumber(steps[i - 1].date)));
+    const room = raw[raw.length - 1] - raw[0];
+    const minTotal = minGap * gaps.length;
+    if (room <= minTotal) {
+      return raw.map((_, index) => raw[0] + room * index / gaps.length);
+    }
+    if (gaps.every((gap, index) => raw[index + 1] - raw[index] >= minGap)) return raw;
+    const leftover = room - minTotal;
+    const sum = gaps.reduce((total, gap) => total + gap, 0) || 1;
+    const xs = [raw[0]];
+    for (let i = 0; i < gaps.length; i++) xs.push(xs[i] + minGap + leftover * (gaps[i] / sum));
+    return xs;
+  }
+
+  function stepPoints(totals, xs, yAt, xStart, xEnd) {
+    const pts = [[xStart, yAt(0)]];
+    for (let i = 0; i < totals.length; i++) {
+      pts.push([xs[i], pts[pts.length - 1][1]]);
+      pts.push([xs[i], yAt(totals[i])]);
+    }
+    pts.push([xEnd, pts[pts.length - 1][1]]);
+    return pts;
+  }
+
+  function pathFrom(pts, close) {
+    const line = pts.map((pt) => pt.map((n) => (Math.round(n * 10) / 10).toFixed(1)).join(" ")).join(" L ");
+    if (!close) return `M ${line}`;
+    const last = pts[pts.length - 1];
+    const first = pts[0];
+    return `M ${line} L ${last[0].toFixed(1)} ${close.y0.toFixed(1)} L ${first[0].toFixed(1)} ${close.y0.toFixed(1)} Z`;
   }
 
   function alsoMoved(item, competencyId) {
@@ -3006,14 +3086,122 @@ function levelLabel(n) {
     </section>`;
   }
 
-  function learnCard(item) {
+  function sparkSVG(series) {
+    if (!series.steps.length) return "";
+    const width = 160;
+    const height = 42;
+    const pad = 3;
+    const domain = chartDomain(series.steps);
+    const yAt = (points) => pad + (1 - points / series.ceiling) * (height - pad * 2);
+    const y0 = yAt(0);
+    const xs = placeXs(series.steps, domain, pad, width - pad, 18);
+    const pts = stepPoints(series.steps.map((step) => step.total), xs, yAt, pad, width - pad);
+    const last = series.steps[series.steps.length - 1];
+    const dot = `${xs[xs.length - 1].toFixed(1)},${yAt(last.total).toFixed(1)}`;
+    return `<svg class="spark" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+      <path class="spark-area" d="${pathFrom(pts, { y0 })}"></path>
+      <path class="spark-line" d="${pathFrom(pts)}"></path>
+      <circle cx="${dot.split(",")[0]}" cy="${dot.split(",")[1]}" r="2.4"></circle>
+    </svg>`;
+  }
+
+  function fieldMarkReading(fieldItem, series, step) {
+    const moved = step.moved.map((id) => {
+      const claim = competency(id);
+      return `${claim.name} to ${levelLabel(step.levels[id]).toLowerCase()} (${pointsLabel(step.levels[id])})`;
+    });
+    const rise = moved.length
+      ? `It raised ${moved.join(", ")}.`
+      : "It did not raise a skill in this field.";
+    const standing = series.skills.map((claim) => {
+      const level = step.levels[claim.id];
+      if (!level) return `${claim.name} still has no evidence`;
+      return `${claim.name} ${pointsLabel(level)}`;
+    }).join(", ");
+    return `${formatDate(step.date)}, ${step.title}. ${fieldItem.name} stands at ${pointsLabel(step.total)}. ${rise} After this work: ${standing}.`;
+  }
+
+  function fieldChart(personRecord, fieldItem) {
+    const series = fieldSeries(personRecord.id, fieldItem.id);
+    if (!series.steps.length) {
+      return `<section class="field-chart field-${fieldItem.id}" aria-labelledby="field-chart-title">
+        <h3 id="field-chart-title">Points over time</h3>
+        <p class="empty">No scored work in ${esc(fieldItem.name)} yet. That is not 0 points. The line starts when a work product is scored.</p>
+      </section>`;
+    }
+    const last = series.steps[series.steps.length - 1];
+    const chosen = series.steps.find((step) => step.id === fieldMarkId) || last;
+    const whose = state.role === "student"
+      ? "These steps are your scored work in this field."
+      : `These steps are ${firstName(personRecord)}’s scored work in this field.`;
+    const width = 640;
+    const height = 200;
+    const padL = 12;
+    const padR = 16;
+    const padT = 14;
+    const padB = 12;
+    const domain = chartDomain(series.steps);
+    const yAt = (points) => padT + (1 - points / series.ceiling) * (height - padT - padB);
+    const y0 = yAt(0);
+    const xs = placeXs(series.steps, domain, padL, width - padR, 56);
+    const pts = stepPoints(series.steps.map((step) => step.total), xs, yAt, padL, width - padR);
+    const bands = [];
+    for (let points = 0; points <= series.ceiling; points += 4) bands.push(points);
+    const grid = bands.map((points) => {
+      const y = yAt(points).toFixed(1);
+      return `<line class="chart-grid" x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}"></line>`;
+    }).join("");
+    const dots = series.steps.map((step, index) => {
+      const on = step.id === chosen.id;
+      const label = `${formatDate(step.date)}, ${step.title}, ${pointsLabel(step.total)} in ${fieldItem.name}`;
+      const x = xs[index].toFixed(1);
+      const y = yAt(step.total).toFixed(1);
+      return `<g class="field-dot" data-action="field-mark" data-id="${esc(step.id)}" tabindex="0" role="button" aria-pressed="${on}" aria-label="${esc(label)}">
+        <circle class="hit" cx="${x}" cy="${y}" r="16"></circle>
+        <circle class="mark" cx="${x}" cy="${y}" r="${on ? 6.5 : 5}"></circle>
+      </g>`;
+    }).join("");
+    const rows = series.steps.map((step) => {
+      const on = step.id === chosen.id;
+      return `<li>
+        <button type="button" data-action="field-mark" data-id="${esc(step.id)}" aria-pressed="${on}">
+          <b>${step.total}<span class="vh"> points</span></b>
+          <span><strong>${esc(step.title)}</strong> · ${esc(formatDate(step.date))}</span>
+        </button>
+      </li>`;
+    }).join("");
+    const rule = `The line adds the furthest stage on each skill in ${fieldItem.name}. A stage is 1 to 4 points. A skill with no evidence adds nothing, and a later mark does not stack on a stage already reached. ${series.ceiling} is every skill at advanced. The line holds to ${formatDate(A.today)}.`;
+    return `<section class="field-chart field-${fieldItem.id}" aria-labelledby="field-chart-title">
+      <h3 id="field-chart-title">Points over time</h3>
+      <p class="chart-total"><b>${last.total}</b> <span>of ${series.ceiling} points in ${esc(fieldItem.name)}</span></p>
+      <p class="muted">${esc(whose)} ${esc(rule)}</p>
+      <div class="chart-scroll">
+        <svg viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(fieldItem.name + " points over time")}">
+          ${grid}
+          <path class="chart-area" d="${pathFrom(pts, { y0 })}"></path>
+          <path class="chart-line" d="${pathFrom(pts)}"></path>
+          ${dots}
+        </svg>
+      </div>
+      <p class="chart-when"><span>${esc(formatDate(series.steps[0].date))}</span><span>${esc(formatDate(A.today))}</span></p>
+      <ol class="field-steps">${rows}</ol>
+      <p class="cloud-read" id="field-mark-read">${esc(fieldMarkReading(fieldItem, series, chosen))}</p>
+    </section>`;
+  }
+
+  function learnCard(item, personRecord) {
     const bundle = fieldBundle(item.id);
     const skills = bundle.skills.map((claim) => claim.short).join(", ");
+    const series = fieldSeries(personRecord.id, item.id);
+    const last = series.steps.length ? series.steps[series.steps.length - 1].total : null;
+    const points = last == null ? "No scored work yet" : pointsLabel(last);
     return `<a class="card field-card field-${item.id}" href="#fields/${item.id}">
       <p class="eyebrow">Field</p>
       <h3>${esc(item.name)}</h3>
       <p>${esc(item.blurb)}</p>
       <p class="meta">${esc(skills)}</p>
+      <p class="meta">${esc(points)}</p>
+      ${sparkSVG(series)}
     </a>`;
   }
 
@@ -3054,7 +3242,7 @@ function levelLabel(n) {
       <section class="ask" aria-labelledby="learn-title">
         <h3 class="section-title" id="learn-title">What you can learn</h3>
         <p class="muted">Four fields. Open one for the skills, the materials to practice, and the work that can place a mark.</p>
-        <div class="learn-grid">${A.fields.map(learnCard).join("")}</div>
+        <div class="learn-grid">${A.fields.map((item) => learnCard(item, personRecord)).join("")}</div>
       </section>
       <section class="ask" aria-labelledby="workshops-title">
         <h3 class="section-title" id="workshops-title">Workshops with a place</h3>
@@ -3176,6 +3364,7 @@ function levelLabel(n) {
         <p class="lede">${esc(item.blurb)} Levels on this page are ${esc(firstName(personRecord))}’s. Materials are worth 0 points. Workshops and projects list the points they can place.</p>
       </header>
       <nav class="field-tabs" aria-label="Fields">${tabs}</nav>
+      ${fieldChart(personRecord, item)}
       <p><a href="#map">Open the map of every subject</a></p>
       <h3 class="section-title">Skills</h3>
       <div class="grid-2">${skills}</div>
@@ -3598,6 +3787,7 @@ function levelLabel(n) {
     if (!student(id)) return;
     state.studentId = id;
     state.competencyId = defaultCompetency(student(id));
+    fieldMarkId = "";
     planNotice = "";
     persist();
     render();
@@ -3641,6 +3831,13 @@ function levelLabel(n) {
       render();
       const card = document.getElementById("cloud-" + claim.id);
       if (card) card.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (action === "field-mark") {
+      fieldMarkId = node.dataset.id || "";
+      render();
+      const reading = document.getElementById("field-mark-read");
+      if (reading) reading.scrollIntoView({ block: "nearest" });
       return;
     }
     if (action === "select-competency") {
@@ -4038,12 +4235,10 @@ function levelLabel(n) {
 
   function onKeydown(event) {
     if (event.key !== "Enter" && event.key !== " ") return;
-    const node = event.target.closest(".network .node");
+    const node = event.target.closest(".network .node, .field-chart .field-dot");
     if (!node) return;
     event.preventDefault();
-    state.competencyId = node.dataset.id;
-    persist();
-    render();
+    node.click();
   }
 
   function init() {
