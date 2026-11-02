@@ -49,6 +49,7 @@
   let cloudStudentId = "";
   let offerCloudFocus = { parentId: "", skillId: "" };
   let fieldMarkId = "";
+  let skillGraphId = "";
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -364,6 +365,18 @@ function levelLabel(n) {
       if (right === id) found.push(left);
     }
     return found;
+  }
+
+  function allParts() {
+    const rows = [];
+    for (const claim of A.competencies) {
+      for (const part of claim.parts || []) rows.push({ ...part, skillId: claim.id, fieldId: claim.field });
+    }
+    return rows;
+  }
+
+  function partById(id) {
+    return allParts().find((part) => part.id === id) || null;
   }
 
   function canDecide(personRecord) {
@@ -870,7 +883,14 @@ function levelLabel(n) {
       state.field = route.param;
       state.skill = "all";
     }
-    if (route.route === "fields" && competency(route.param)) {
+    if (route.route === "fields" && partById(route.param)) {
+      const part = partById(route.param);
+      const claim = competency(part.skillId);
+      state.field = claim.field;
+      state.skill = claim.id;
+      state.competencyId = claim.id;
+      skillGraphId = part.id;
+    } else if (route.route === "fields" && competency(route.param)) {
       const claim = competency(route.param);
       state.field = claim.field;
       state.skill = claim.id;
@@ -941,6 +961,44 @@ function levelLabel(n) {
     for (const [left, right] of A.edges) {
       expect(!!competency(left) && !!competency(right), "edge " + left + "-" + right);
     }
+    const partIds = new Set();
+    const partOwner = new Map();
+    for (const claim of A.competencies) {
+      expect(Array.isArray(claim.parts) && claim.parts.length >= 2, "parts " + claim.id);
+      claim.parts.forEach((part, index) => {
+        expect(!!part.id && !!part.name && !!part.about && !partIds.has(part.id) && !competency(part.id), "part " + part.id);
+        partIds.add(part.id);
+        partOwner.set(part.id, { claim, index });
+        expect(Array.isArray(part.needs || []), "part needs " + part.id);
+        for (const id of part.needs || []) expect(id !== part.id, "part self " + part.id);
+      });
+    }
+    for (const claim of A.competencies) {
+      claim.parts.forEach((part, index) => {
+        for (const id of part.needs || []) {
+          const owner = partOwner.get(id);
+          expect(!!owner, "part need missing " + part.id + " " + id);
+          if (owner && owner.claim.id === claim.id) expect(owner.index < index, "part order " + part.id);
+        }
+      });
+    }
+    const walkPart = (id, stack) => {
+      if (stack.includes(id)) {
+        expect(false, "part cycle " + stack.concat(id).join(">"));
+        return;
+      }
+      const part = allParts().find((item) => item.id === id);
+      for (const prior of (part && part.needs) || []) walkPart(prior, stack.concat(id));
+    };
+    for (const part of allParts()) walkPart(part.id, []);
+    const deriv = allParts().find((part) => part.id === "MC-deriv");
+    const integ = allParts().find((part) => part.id === "MC-int");
+    const rate = allParts().find((part) => part.id === "PM-rate");
+    const ray = allParts().find((part) => part.id === "PO-ray");
+    expect(!!deriv && (deriv.needs || []).includes("MC-basic") && !(deriv.needs || []).includes("MA-eq"), "derivatives rest on basic calculus");
+    expect(!!integ && (integ.needs || []).join(",") === "MC-deriv", "integrals rest on derivatives");
+    expect(!!rate && (rate.needs || []).includes("MC-deriv"), "the rate rests on derivatives");
+    expect(!!ray && (ray.needs || []).includes("MG-fig"), "a ray rests on a figure");
     for (const item of A.projects) {
       for (const id of item.elicits) expect(!!competency(id), "elicit " + id);
       for (const feature of item.features) {
@@ -1538,7 +1596,7 @@ function levelLabel(n) {
       ${ecdBoard()}
       <div class="rule">
         <p class="eyebrow">Update rule</p>
-        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. A mark is worth 1, 2, 3, or 4 points, matching the stage, and an action shows the most it can place. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage.</p>
+        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. A mark is worth 1, 2, 3, or 4 points, matching the stage, and an action shows the most it can place. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage. On a field, the parts of a skill are in order. Derivatives rest on basic calculus, and integrals rest on derivatives. A part from another field can sit on that path. The mark stays on the skill. The parts are not separate scores.</p>
       </div>
       <h3 class="section-title">Decisions already in force</h3>
       <div class="grid-2">${decisions}</div>
@@ -3105,6 +3163,104 @@ function levelLabel(n) {
     </svg>`;
   }
 
+  function joinBits(bits) {
+    if (bits.length <= 1) return bits.join("");
+    if (bits.length === 2) return `${bits[0]} and ${bits[1]}`;
+    return `${bits.slice(0, -1).join(", ")}, and ${bits[bits.length - 1]}`;
+  }
+
+  function partLabel(part, homeSkillId) {
+    if (part.skillId === homeSkillId) return part.name;
+    return `${part.name} in ${competency(part.skillId).name}`;
+  }
+
+  function partFocusId(fieldId) {
+    const skills = A.competencies.filter((claim) => claim.field === fieldId);
+    const shown = new Set();
+    for (const skill of skills) {
+      for (const part of skill.parts) {
+        shown.add(part.id);
+        for (const id of part.needs || []) shown.add(id);
+      }
+    }
+    if (shown.has(skillGraphId)) return skillGraphId;
+    const claim = competency(state.competencyId);
+    if (claim && claim.field === fieldId && claim.parts[0]) return claim.parts[0].id;
+    return skills[0].parts[0].id;
+  }
+
+  function partReading(personRecord, part) {
+    const skill = competency(part.skillId);
+    const level = levelOf(personRecord.id, skill.id);
+    const stage = level == null
+      ? `${skill.name} has no evidence yet.`
+      : `${skill.name} is ${levelLabel(level).toLowerCase()} (${pointsLabel(level)}).`;
+    const prior = (part.needs || []).map(partById).filter(Boolean);
+    const later = allParts().filter((item) => (item.needs || []).includes(part.id));
+    const bits = [];
+    if (prior.length) bits.push(`It rests on ${joinBits(prior.map((item) => partLabel(item, part.skillId)))}.`);
+    else bits.push(`It is where ${skill.name} starts.`);
+    if (later.length) bits.push(`${joinBits(later.map((item) => partLabel(item, part.skillId)))} ${later.length === 1 ? "rests" : "rest"} on it.`);
+    return `${part.name} is a part of ${skill.name}. ${part.about} ${bits.join(" ")} ${stage} The mark stays on ${skill.name}. These parts are not separate scores.`;
+  }
+
+  function skillGraph(personRecord, fieldItem) {
+    const skills = A.competencies.filter((claim) => claim.field === fieldItem.id);
+    const focusId = partFocusId(fieldItem.id);
+    const focus = partById(focusId);
+    const rows = skills.map((skill) => {
+      const level = levelOf(personRecord.id, skill.id);
+      const stage = level == null ? "No evidence yet" : `${levelLabel(level)} · ${level}`;
+      const steps = skill.parts.map((raw) => {
+        const part = partById(raw.id);
+        const outside = (part.needs || [])
+          .map(partById)
+          .filter((item) => item && item.skillId !== skill.id);
+        const prior = (part.needs || []).map(partById).filter(Boolean);
+        const note = prior.length
+          ? `Rests on ${joinBits(prior.map((item) => partLabel(item, skill.id)))}`
+          : "Starts this skill";
+        const outs = outside.map((item) => {
+          const on = item.id === focusId;
+          const area = field(item.fieldId);
+          return `<button type="button" class="part-card is-outside field-${item.fieldId}${on ? " is-selected" : ""}" id="part-${esc(item.id)}" data-action="skill-graph" data-id="${esc(item.id)}" aria-pressed="${on}">
+            <b>${esc(item.name)}</b>
+            <span>${esc(competency(item.skillId).name)} · ${esc(area.short)}</span>
+          </button>`;
+        }).join("");
+        const on = part.id === focusId;
+        return `<li class="part-step">
+          ${outs ? `<div class="part-outs">${outs}</div>` : ""}
+          <button type="button" class="part-card field-${skill.field}${on ? " is-selected" : ""}" id="part-${esc(part.id)}" data-action="skill-graph" data-id="${esc(part.id)}" aria-pressed="${on}">
+            <b>${esc(part.name)}</b>
+            <span>${esc(note)}</span>
+          </button>
+        </li>`;
+      }).join("");
+      return `<div class="part-row field-${skill.field}">
+        <h4>${esc(skill.name)} <span>${esc(stage)}</span></h4>
+        <ol class="part-chain" aria-label="${esc("Parts of " + skill.name + ", in order")}">${steps}</ol>
+      </div>`;
+    }).join("");
+    const whose = state.role === "student"
+      ? "The stage beside each skill is yours."
+      : `The stage beside each skill is ${firstName(personRecord)}’s.`;
+    const lede = `Inside a skill, the parts come in order. You meet basic calculus before derivatives, and derivatives before integrals. A dashed card is a part from another field. ${whose} The mark stays on the skill. The parts are not separate scores.`;
+    const linkSkill = competency(focus.skillId);
+    const link = focus.fieldId === fieldItem.id
+      ? `<a href="#fields/${esc(linkSkill.id)}">Open ${esc(linkSkill.name)}</a>`
+      : `<a href="#fields/${esc(focus.id)}">Open ${esc(focus.name)} in ${esc(linkSkill.name)}</a>`;
+    return `<section class="skill-graph field-${fieldItem.id}" id="skill-graph" aria-labelledby="skill-graph-title">
+      <h3 id="skill-graph-title">The order inside each skill</h3>
+      <p class="muted">${esc(lede)}</p>
+      ${rows}
+      <div class="cloud-read" id="skill-graph-read">
+        <p>${esc(partReading(personRecord, focus))}</p>
+        <p>${link}</p>
+      </div>
+    </section>`;
+  }
+
   function fieldMarkReading(fieldItem, series, step) {
     const moved = step.moved.map((id) => {
       const claim = competency(id);
@@ -3317,6 +3473,7 @@ function levelLabel(n) {
 
   function activeFieldId() {
     if (field(state.param)) return state.param;
+    if (state.route === "fields" && partById(state.param)) return partById(state.param).fieldId;
     if (state.route === "fields" && competency(state.param)) return competency(state.param).field;
     if (state.field !== "all" && field(state.field)) return state.field;
     const claim = competency(state.competencyId);
@@ -3364,6 +3521,7 @@ function levelLabel(n) {
         <p class="lede">${esc(item.blurb)} Levels on this page are ${esc(firstName(personRecord))}’s. Materials are worth 0 points. Workshops and projects list the points they can place.</p>
       </header>
       <nav class="field-tabs" aria-label="Fields">${tabs}</nav>
+      ${skillGraph(personRecord, item)}
       ${fieldChart(personRecord, item)}
       <p><a href="#map">Open the map of every subject</a></p>
       <h3 class="section-title">Skills</h3>
@@ -3468,6 +3626,15 @@ function levelLabel(n) {
         href: "#fields/" + item.id,
         text: [item.name, item.short, item.claim, area.name, "skill", "learn"].join(" "),
       });
+      for (const part of item.parts || []) {
+        rows.push({
+          kind: "Skill",
+          title: part.name,
+          detail: clipText(`Part of ${item.name}. ${part.about}`),
+          href: "#fields/" + part.id,
+          text: [part.name, part.about, item.name, item.short, area.name, "part", "skill", "learn"].join(" "),
+        });
+      }
     }
     for (const item of A.workshops) {
       const activities = (item.activities || []).map((row) => row.name).join(" ");
@@ -3769,6 +3936,7 @@ function levelLabel(n) {
     if (state.route === "workshops" && workshop(state.param)) id = "workshop-" + state.param;
     else if (state.route === "library" && materialById(state.param)) id = state.param;
     else if (state.route === "plan" && sessionById(state.param)) id = state.param;
+    else if (state.route === "fields" && partById(state.param)) id = "part-" + state.param;
     else if (state.route === "fields" && competency(state.param)) id = "skill-" + state.param;
     if (!id) return;
     const node = document.getElementById(id)
@@ -3788,6 +3956,7 @@ function levelLabel(n) {
     state.studentId = id;
     state.competencyId = defaultCompetency(student(id));
     fieldMarkId = "";
+    skillGraphId = "";
     planNotice = "";
     persist();
     render();
@@ -3837,6 +4006,17 @@ function levelLabel(n) {
       fieldMarkId = node.dataset.id || "";
       render();
       const reading = document.getElementById("field-mark-read");
+      if (reading) reading.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (action === "skill-graph") {
+      const part = partById(node.dataset.id);
+      if (!part) return;
+      skillGraphId = part.id;
+      state.competencyId = part.skillId;
+      persist();
+      render();
+      const reading = document.getElementById("skill-graph-read");
       if (reading) reading.scrollIntoView({ block: "nearest" });
       return;
     }
@@ -4238,7 +4418,7 @@ function levelLabel(n) {
     const node = event.target.closest(".network .node, .field-chart .field-dot");
     if (!node) return;
     event.preventDefault();
-    node.click();
+    node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
   function init() {

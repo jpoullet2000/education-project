@@ -58,6 +58,11 @@
         "Someone else can recompute the equation.",
         "One feature the equation omits is named.",
       ],
+      parts: [
+        { id: "MA-qty", name: "Quantity", about: "It names the amounts in the situation, and their units." },
+        { id: "MA-eq", name: "Equation", about: "It relates those amounts so someone else can recompute.", needs: ["MA-qty"] },
+        { id: "MA-omit", name: "What it leaves out", about: "It names one feature the equation omits.", needs: ["MA-eq"] },
+      ],
     },
     {
       id: "MG", field: "mathematics", name: "Geometry", short: "Geometry", x: 140, y: 236,
@@ -66,6 +71,11 @@
         "A figure or a stated proportion is attached to the situation.",
         "A measure on the figure matches a measure in the world.",
         "Says what the drawing flattens or ignores.",
+      ],
+      parts: [
+        { id: "MG-fig", name: "A figure", about: "It attaches a shape or a proportion to the situation." },
+        { id: "MG-meas", name: "A measure", about: "A length or an angle on the figure matches the world.", needs: ["MG-fig"] },
+        { id: "MG-flat", name: "What the drawing ignores", about: "It says what the flat picture leaves out.", needs: ["MG-meas"] },
       ],
     },
     {
@@ -76,6 +86,11 @@
         "Steps are in an order a peer can check.",
         "A key move is justified, and the assumption is stated.",
       ],
+      parts: [
+        { id: "MC-basic", name: "Basic calculus", about: "It names what is changing, and a rate in ordinary words." },
+        { id: "MC-deriv", name: "Derivatives", about: "It writes that rate as its own function.", needs: ["MC-basic"] },
+        { id: "MC-int", name: "Integrals", about: "It builds the accumulated amount back from the rate.", needs: ["MC-deriv"] },
+      ],
     },
     {
       id: "MS", field: "mathematics", name: "Statistics", short: "Statistics", x: 140, y: 472,
@@ -84,6 +99,11 @@
         "A range, an interval, or a stated doubt accompanies the result.",
         "Says what drives the spread.",
         "The conclusion keeps the uncertainty visible.",
+      ],
+      parts: [
+        { id: "MS-band", name: "A spread", about: "It puts a range or a stated doubt next to the number." },
+        { id: "MS-driver", name: "What drives it", about: "It says what makes the spread wide or narrow.", needs: ["MS-band"] },
+        { id: "MS-keep", name: "Kept in the conclusion", about: "The result a reader sees still carries the doubt.", needs: ["MS-driver"] },
       ],
     },
     {
@@ -94,6 +114,11 @@
         "A reason is separated from an example.",
         "One question the text leaves open is named.",
       ],
+      parts: [
+        { id: "ER-claim", name: "The claim", about: "It restates the author's claim in the student's own words." },
+        { id: "ER-reason", name: "The reason", about: "It separates a reason from an example.", needs: ["ER-claim"] },
+        { id: "ER-open", name: "What it leaves open", about: "It names a question the text does not settle.", needs: ["ER-reason"] },
+      ],
     },
     {
       id: "EW", field: "english", name: "Writing", short: "Writing", x: 350, y: 294,
@@ -102,6 +127,11 @@
         "The claim is in one place, in ordinary language.",
         "Reasons follow in an order a new reader can walk.",
         "A revision responds to a specific question from someone else.",
+      ],
+      parts: [
+        { id: "EW-claim", name: "One claim", about: "It puts the claim in one place, in ordinary language." },
+        { id: "EW-order", name: "An order", about: "Reasons follow in an order a new reader can walk.", needs: ["EW-claim"] },
+        { id: "EW-rev", name: "A revision", about: "A change answers a specific question from someone else.", needs: ["EW-order"] },
       ],
     },
     {
@@ -112,6 +142,11 @@
         "The reply meets the objection that was actually made.",
         "A remaining disagreement stays on the page.",
       ],
+      parts: [
+        { id: "EH-who", name: "An audience", about: "It names who this is for." },
+        { id: "EH-obj", name: "The objection", about: "The reply meets the objection that was actually made.", needs: ["EH-who"] },
+        { id: "EH-split", name: "The disagreement", about: "A remaining disagreement stays on the page.", needs: ["EH-obj"] },
+      ],
     },
     {
       id: "PM", field: "physics", name: "Mechanics", short: "Mechanics", x: 560, y: 118,
@@ -120,6 +155,11 @@
         "Names parts and what they do.",
         "Connects the mechanism to the observed outcome.",
         "Does not stop at a label with no how.",
+      ],
+      parts: [
+        { id: "PM-parts", name: "Parts", about: "It names the parts and what they do." },
+        { id: "PM-force", name: "Forces", about: "It connects the push to the outcome you can see.", needs: ["PM-parts"] },
+        { id: "PM-rate", name: "The rate", about: "It treats acceleration, or another change, as a derivative.", needs: ["PM-force", "MC-deriv"] },
       ],
     },
     {
@@ -130,6 +170,11 @@
         "Prediction and observation can both be pointed at.",
         "Says what the diagram does not show.",
       ],
+      parts: [
+        { id: "PO-ray", name: "A ray", about: "It draws the path of light for a stated setup.", needs: ["MG-fig"] },
+        { id: "PO-both", name: "Prediction and observation", about: "Both the predicted path and the measured one can be pointed at.", needs: ["PO-ray"] },
+        { id: "PO-limit", name: "What the diagram omits", about: "It says what the drawing does not show.", needs: ["PO-both"] },
+      ],
     },
     {
       id: "PX", field: "physics", name: "Experiment", short: "Experiment", x: 560, y: 472,
@@ -138,6 +183,11 @@
         "Says what is varied and what is held still.",
         "Says what result would count against the idea.",
         "Another student could follow the procedure.",
+      ],
+      parts: [
+        { id: "PX-vary", name: "What you vary", about: "It says what changes and what is held still." },
+        { id: "PX-against", name: "What would count against", about: "It names the result that would challenge the idea.", needs: ["PX-vary"] },
+        { id: "PX-steps", name: "A procedure", about: "Another student could follow the steps.", needs: ["PX-against"] },
       ],
     },
     {
@@ -148,6 +198,11 @@
         "The terms stay consistent.",
         "A step that does not follow is not left looking as if it does.",
       ],
+      parts: [
+        { id: "PL-case", name: "Claim and reasons", about: "A claim, reasons, and a consequence or an objection are present." },
+        { id: "PL-terms", name: "Steady terms", about: "The words that do the work stay consistent.", needs: ["PL-case"] },
+        { id: "PL-step", name: "A step that follows", about: "A gap is not left looking like a proof.", needs: ["PL-terms"] },
+      ],
     },
     {
       id: "PK", field: "philosophy", name: "Knowledge", short: "Knowledge", x: 770, y: 294,
@@ -156,6 +211,11 @@
         "Two notions are stated apart, such as a measurement and a value, or a model and the world.",
         "A case shows where the distinction changes a decision.",
         "States what evidence would press the current account to change.",
+      ],
+      parts: [
+        { id: "PK-apart", name: "Two things apart", about: "It states a measurement and a value, or a model and the world, as two things." },
+        { id: "PK-case", name: "Where it matters", about: "A case shows where the distinction changes a decision.", needs: ["PK-apart"] },
+        { id: "PK-retire", name: "What would retire it", about: "It states what evidence would press the account to change.", needs: ["PK-case"] },
       ],
     },
     {
@@ -166,11 +226,18 @@
         "Distinguishes a benefit, a harm, and an uncertainty.",
         "Takes a position on what should be done, for a reason that is not only efficiency.",
       ],
+      parts: [
+        { id: "PE-who", name: "Who is affected", about: "It names the people, not only the system." },
+        { id: "PE-kinds", name: "Benefit, harm, doubt", about: "It tells a benefit, a harm, and an uncertainty apart.", needs: ["PE-who"] },
+        { id: "PE-owed", name: "What is owed", about: "It takes a position that is not only about efficiency.", needs: ["PE-kinds"] },
+      ],
     },
   ];
 
   /* A line means two subjects should be read together.
-     It does not move a score. Only an observation does that. */
+     It does not move a score. Only an observation does that.
+     Parts are the order inside a skill. Derivatives rest on basic calculus.
+     Integrals rest on derivatives. A part is not its own score. */
   const edges = [
     ["MA", "MG"], ["MA", "MC"], ["MC", "MS"], ["MG", "MS"],
     ["ER", "EW"], ["EW", "EH"],
