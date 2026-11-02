@@ -35,6 +35,8 @@
       registrations: {},
       withdrawals: {},
       planned: [],
+      moods: {},
+      assistant: {},
     };
   }
 
@@ -50,6 +52,24 @@
   let offerCloudFocus = { parentId: "", skillId: "" };
   let fieldMarkId = "";
   let skillGraphId = "";
+  let assistantDraft = "";
+  let assistantBusy = false;
+  let assistantBusyFor = "";
+  let assistantNotice = "";
+  let assistantToken = 0;
+
+  const ASSISTANT_MOODS = [
+    { id: "steady", label: "Steady" },
+    { id: "curious", label: "Curious" },
+    { id: "tired", label: "Tired" },
+    { id: "stuck", label: "Stuck" },
+    { id: "overwhelmed", label: "Overwhelmed" },
+  ];
+  const ASSISTANT_PROMPTS = [
+    { id: "coming", label: "What is coming up for me?" },
+    { id: "task", label: "Suggest one task that would move a skill." },
+    { id: "prepare", label: "What should I prepare before the next sitting?" },
+  ];
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -638,6 +658,8 @@ function levelLabel(n) {
       registrations: state.registrations,
       withdrawals: state.withdrawals,
       planned: state.planned,
+      moods: state.moods,
+      assistant: state.assistant,
     };
     try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch (err) { /* private mode */ }
   }
@@ -684,6 +706,12 @@ function levelLabel(n) {
     state.planned = cleanPlanned(state.planned);
     state.registrations = cleanRegistrationMap(state.registrations);
     state.withdrawals = cleanWithdrawalMap(state.withdrawals);
+    normalizeAssistantState();
+  }
+
+  function normalizeAssistantState() {
+    if (!state.moods || typeof state.moods !== "object" || Array.isArray(state.moods)) state.moods = {};
+    if (!state.assistant || typeof state.assistant !== "object" || Array.isArray(state.assistant)) state.assistant = {};
   }
 
   function cleanContributor(value) {
@@ -3380,7 +3408,252 @@ function levelLabel(n) {
     </article>`;
   }
 
-  function studentDashInner(personRecord) {
+  function assistantMood(studentId) {
+    const saved = state.moods && state.moods[studentId];
+    return ASSISTANT_MOODS.some((item) => item.id === saved) ? saved : "steady";
+  }
+
+  function assistantThread(studentId) {
+    const rows = state.assistant && state.assistant[studentId];
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((row) => row && (row.role === "user" || row.role === "assistant" || row.role === "note") && typeof row.text === "string");
+  }
+
+  function assistantSnapshot(personRecord) {
+    const agenda = allSessions()
+      .filter((item) => sittingOpen(item) && rosterOf(item).includes(personRecord.id))
+      .sort(compareSittings)
+      .slice(0, 8)
+      .map((item) => ({
+        date: item.date,
+        weekday: weekdayName(item.date),
+        start: item.start,
+        end: item.end,
+        kind: item.kind,
+        title: sessionTitle(item),
+        place: item.place,
+        points: agendaPoints(item),
+      }));
+    const open = allSessions()
+      .filter((item) => sittingOpen(item) && item.kind !== "lecture" && !rosterOf(item).includes(personRecord.id))
+      .sort(compareSittings)
+      .slice(0, 8)
+      .map((item) => {
+        const parent = sessionParent(item);
+        return {
+          date: item.date,
+          weekday: weekdayName(item.date),
+          start: item.start,
+          end: item.end,
+          kind: item.kind,
+          title: sessionTitle(item),
+          place: item.place,
+          points: agendaPoints(item),
+          places: placesOpen(item),
+          skills: parent && parent.elicits ? parent.elicits.map((id) => competency(id).name) : [],
+        };
+      });
+    const skills = A.competencies.map((claim) => {
+      const level = levelOf(personRecord.id, claim.id);
+      const parts = (claim.parts || []).map((part) => ({
+        name: part.name,
+        restsOn: (part.needs || []).map((id) => {
+          const prior = partById(id);
+          if (!prior) return "";
+          if (prior.skillId === claim.id) return prior.name;
+          return prior.name + " in " + competency(prior.skillId).name;
+        }).filter(Boolean),
+      }));
+      const row = {
+        name: claim.name,
+        field: field(claim.field).name,
+        stage: level == null ? "no evidence yet" : levelLabel(level),
+        room: pointsStillOpen(personRecord.id, claim.id),
+        parts,
+      };
+      if (level != null) row.points = level;
+      return row;
+    });
+    const tasks = [];
+    const works = A.projects.concat(A.workshops).slice().sort((a, b) => taskRank(a, personRecord) - taskRank(b, personRecord));
+    for (const work of works) {
+      for (const activity of work.activities || []) {
+        const openRoom = (activity.competencyIds || []).filter((id) => competency(id) && pointsStillOpen(personRecord.id, id) > 0);
+        if (!openRoom.length) continue;
+        tasks.push({
+          name: activity.name,
+          kind: activity.kind,
+          where: work.name,
+          skills: openRoom.map((id) => competency(id).name),
+        });
+      }
+    }
+    const recommended = personRecord.recommendedProjectId && project(personRecord.recommendedProjectId);
+    return {
+      name: firstName(personRecord),
+      today: A.today,
+      projects: (personRecord.projectIds || []).map((id) => project(id) && project(id).name).filter(Boolean),
+      recommendedProject: recommended ? recommended.name : "",
+      agenda,
+      open,
+      skills,
+      tasks: tasks.slice(0, 12),
+    };
+  }
+
+  function taskRank(work, personRecord) {
+    if ((personRecord.projectIds || []).includes(work.id)) return 0;
+    const sitting = allSessions().find((item) => item.ref === work.id && sittingOpen(item));
+    if (sitting && rosterOf(sitting).includes(personRecord.id)) return 1;
+    if (sitting) return 2;
+    return 3;
+  }
+
+  function rememberAssistantDraft() {
+    const draftBox = document.getElementById("assistant-q");
+    if (draftBox) assistantDraft = draftBox.value;
+  }
+
+  function pushAssistant(studentId, row) {
+    const next = assistantThread(studentId).concat([row]).slice(-12);
+    state.assistant[studentId] = next;
+  }
+
+  function askAssistant(text) {
+    if (state.role !== "student" || assistantBusy) return;
+    const question = String(text || "").trim().slice(0, 600);
+    if (!question) {
+      assistantNotice = "Write a question, or pick one of the three above.";
+      const status = document.getElementById("assistant-status");
+      if (status) status.textContent = assistantNotice;
+      const input = document.getElementById("assistant-q");
+      if (input) input.focus();
+      return;
+    }
+    const personRecord = current();
+    normalizeAssistantState();
+    pushAssistant(personRecord.id, { role: "user", text: question });
+    assistantDraft = "";
+    const draftBox = document.getElementById("assistant-q");
+    if (draftBox) draftBox.value = "";
+    assistantNotice = "";
+    assistantBusy = true;
+    assistantBusyFor = personRecord.id;
+    const token = ++assistantToken;
+    const studentId = personRecord.id;
+    const payload = {
+      mood: assistantMood(studentId),
+      messages: assistantThread(studentId)
+        .filter((row) => row.role === "user" || row.role === "assistant")
+        .slice(-8)
+        .map((row) => ({ role: row.role, content: row.text })),
+      snapshot: assistantSnapshot(personRecord),
+    };
+    persist();
+    render();
+    const panel = document.getElementById("assistant");
+    if (panel) panel.scrollIntoView({ block: "nearest" });
+    fetch("/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(async (response) => {
+      let data = {};
+      try { data = await response.json(); } catch (err) { data = {}; }
+      if (!response.ok) {
+        const fallback = response.status === 404
+          ? "The assistant runs with the atelier server. From the project folder, run node server.js and open the address it prints."
+          : "The assistant could not answer just now.";
+        throw new Error(data.error || fallback);
+      }
+      if (!data.reply) throw new Error("The assistant sent an empty reply.");
+      return String(data.reply);
+    }).then((reply) => {
+      if (token !== assistantToken) return;
+      pushAssistant(studentId, { role: "assistant", text: reply.slice(0, 2000) });
+    }).catch((err) => {
+      if (token !== assistantToken) return;
+      const message = err && err.message === "Failed to fetch"
+        ? "The assistant runs with the atelier server. From the project folder, run node server.js and open the address it prints."
+        : (err && err.message) || "The assistant could not answer just now.";
+      pushAssistant(studentId, { role: "note", text: message });
+    }).finally(() => {
+      if (token !== assistantToken) return;
+      assistantBusy = false;
+      assistantBusyFor = "";
+      persist();
+      render();
+      const log = document.getElementById("assistant-log");
+      if (log) log.scrollIntoView({ block: "nearest" });
+      const input = document.getElementById("assistant-q");
+      if (input) input.focus({ preventScroll: true });
+    });
+  }
+
+  function clearAssistant() {
+    if (state.role !== "student") return;
+    const studentId = current().id;
+    normalizeAssistantState();
+    state.assistant[studentId] = [];
+    assistantDraft = "";
+    const draftBox = document.getElementById("assistant-q");
+    if (draftBox) draftBox.value = "";
+    assistantNotice = "The conversation is cleared. Your mood stays.";
+    if (assistantBusyFor === studentId) {
+      assistantBusy = false;
+      assistantBusyFor = "";
+      assistantToken += 1;
+    }
+    persist();
+    render();
+    const input = document.getElementById("assistant-q");
+    if (input) input.focus({ preventScroll: true });
+  }
+
+  function assistantPanel(personRecord) {
+    const mood = assistantMood(personRecord.id);
+    const moods = ASSISTANT_MOODS.map((item) =>
+      `<button type="button" data-action="assistant-mood" data-id="${item.id}" aria-pressed="${item.id === mood}">${item.label}</button>`
+    ).join("");
+    const waiting = assistantBusy && assistantBusyFor === personRecord.id;
+    const prompts = ASSISTANT_PROMPTS.map((item) =>
+      `<button type="button" data-action="assistant-ask" data-id="${item.id}"${waiting ? " disabled" : ""}>${esc(item.label)}</button>`
+    ).join("");
+    const rows = assistantThread(personRecord.id);
+    let log = "";
+    if (!rows.length && !waiting) {
+      log = `<p class="empty">Set how you feel, then ask about the week. The reply stays in this browser.</p>`;
+    } else {
+      log = rows.map((row) => {
+        const kind = row.role === "user" ? "you" : row.role === "note" ? "note" : "atelier";
+        const label = row.role === "user" ? "You" : "Atelier";
+        return `<p class="assistant-turn" data-who="${kind}"><b>${label}</b>${esc(row.text)}</p>`;
+      }).join("");
+      if (waiting) log += `<p class="assistant-wait">Looking at your week and your mood.</p>`;
+    }
+    const status = waiting ? "" : assistantNotice;
+    return `<section class="assistant" id="assistant" aria-labelledby="assistant-title">
+      <p class="eyebrow">Atelier assistant</p>
+      <h3 id="assistant-title">A word before you start</h3>
+      <p>Ask about a coming sitting, or for a task that would move a skill. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
+      <p class="eyebrow" id="mood-label">How you feel</p>
+      <div class="moods" role="group" aria-labelledby="mood-label">${moods}</div>
+      <p class="muted">Steady keeps to one sitting and one task. Curious can go a step further. Tired and stuck stay small. Overwhelmed names the next sitting and leaves the rest.</p>
+      <div class="assistant-prompts">${prompts}</div>
+      <div class="assistant-log" id="assistant-log" aria-live="polite">${log}</div>
+      <form class="stack-form" data-form="assistant">
+        <label for="assistant-q">Ask about a sitting or a task</label>
+        <textarea id="assistant-q" name="q" maxlength="600">${esc(assistantDraft)}</textarea>
+        <div class="action-row">
+          <button type="submit" class="primary"${waiting ? " disabled" : ""}>${waiting ? "Looking…" : "Send"}</button>
+          <button type="button" class="quiet" data-action="assistant-clear">Clear the conversation</button>
+        </div>
+      </form>
+      <p id="assistant-status" class="muted" role="status">${esc(status)}</p>
+    </section>`;
+  }
+
+  function studentDashInner(personRecord, options = {}) {
     const workshops = openSittings("workshop").map(offerCard).join("");
     const projects = openSittings("project").map(offerCard).join("");
     const recordLabel = state.role === "student" ? "Your record" : `${firstName(personRecord)}’s record`;
@@ -3394,6 +3667,7 @@ function levelLabel(n) {
         <p class="lede">Open a field, take a place at a workshop, or look at a project that is meeting. Search finds a skill, a material, a lecture, or a sitting by name.</p>
       </header>
       ${planNoticeHTML()}
+      ${options.assistant ? assistantPanel(personRecord) : ""}
       ${skillCloud(personRecord)}
       <section class="ask" aria-labelledby="learn-title">
         <h3 class="section-title" id="learn-title">What you can learn</h3>
@@ -3452,7 +3726,7 @@ function levelLabel(n) {
   function renderDashboard() {
     if (state.role === "student") {
       const personRecord = current();
-      return `<article class="page" data-page="dashboard" data-student="${personRecord.id}">${studentDashInner(personRecord)}</article>`;
+      return `<article class="page" data-page="dashboard" data-student="${personRecord.id}">${studentDashInner(personRecord, { assistant: true })}</article>`;
     }
     if (state.role === "mentor") {
       return `<article class="page" data-page="dashboard">${mentorDashInner(state.mentorId)}</article>`;
@@ -3905,6 +4179,7 @@ function levelLabel(n) {
   }
 
   function render(options = {}) {
+    rememberAssistantDraft();
     const y = window.scrollY;
     const active = document.activeElement;
     const restore = active && active.dataset && active.dataset.action && active.dataset.id
@@ -4007,6 +4282,26 @@ function levelLabel(n) {
       render();
       const reading = document.getElementById("field-mark-read");
       if (reading) reading.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (action === "assistant-mood") {
+      if (state.role !== "student") return;
+      const mood = node.dataset.id;
+      if (!ASSISTANT_MOODS.some((item) => item.id === mood)) return;
+      normalizeAssistantState();
+      state.moods[current().id] = mood;
+      persist();
+      render();
+      return;
+    }
+    if (action === "assistant-ask") {
+      const prompt = ASSISTANT_PROMPTS.find((item) => item.id === node.dataset.id);
+      if (!prompt) return;
+      askAssistant(prompt.label);
+      return;
+    }
+    if (action === "assistant-clear") {
+      clearAssistant();
       return;
     }
     if (action === "skill-graph") {
@@ -4145,7 +4440,7 @@ function levelLabel(n) {
       return;
     }
     if (action === "reset") {
-      const ok = window.confirm("Clear challenges, mentor notes, reports, materials, and registrations saved in this browser? The sample shelf and the sample plan stay.");
+      const ok = window.confirm("Clear challenges, mentor notes, reports, materials, registrations, and the assistant conversation saved in this browser? The sample shelf and the sample plan stay.");
       if (!ok) return;
       try { localStorage.removeItem(KEY); } catch (err) { /* ignore */ }
       const route = state.route;
@@ -4155,6 +4450,11 @@ function levelLabel(n) {
       state.param = param;
       libraryNotice = "";
       planNotice = "";
+      assistantDraft = "";
+      assistantNotice = "";
+      assistantBusy = false;
+      assistantBusyFor = "";
+      assistantToken += 1;
       render();
     }
   }
@@ -4204,6 +4504,10 @@ function levelLabel(n) {
     if (!(form instanceof HTMLFormElement) || !form.dataset.form) return;
     event.preventDefault();
     const data = new FormData(form);
+    if (form.dataset.form === "assistant") {
+      askAssistant(String(data.get("q") || ""));
+      return;
+    }
     if (form.dataset.form === "find") {
       const query = String(data.get("q") || "").trim().slice(0, 80);
       const input = document.getElementById("find-q");

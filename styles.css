@@ -607,6 +607,64 @@ main {
 .doors { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem; }
 .ask { margin-top: 0.4rem; }
 
+.assistant {
+  background: var(--paper-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.05rem 1.05rem;
+  margin: 0.2rem 0 1.25rem;
+  max-width: 42rem;
+}
+.assistant h3 { margin: 0.15rem 0 0.35rem; font-size: 1.45rem; }
+.assistant .eyebrow:not(:first-child) { margin-top: 0.85rem; }
+.moods, .assistant-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.moods { margin: 0.35rem 0 0.2rem; }
+.moods button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper-2);
+  border-color: var(--ink);
+}
+.assistant-prompts { margin: 0.7rem 0 0.2rem; }
+.assistant-prompts button {
+  background: var(--paper);
+  box-shadow: none;
+  font-size: 0.92rem;
+}
+.assistant-log { display: grid; gap: 0.5rem; margin: 0.75rem 0 0.85rem; }
+.assistant-turn {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  white-space: pre-wrap;
+}
+.assistant-turn[data-who="you"] {
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.assistant-turn[data-who="note"] { color: var(--ink-soft); }
+.assistant-turn b {
+  display: block;
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 0.2rem;
+}
+.assistant form textarea { min-height: 4.4rem; }
+.assistant .action-row { margin-top: 0.15rem; }
+.assistant .action-row button.quiet {
+  border-color: var(--line-strong);
+  background: var(--paper);
+}
+.assistant-wait { margin: 0; color: var(--ink-soft); }
+
 .skill-cloud { margin: 0.3rem 0 1.35rem; container-type: inline-size; }
 .cloud-head {
   display: flex;
