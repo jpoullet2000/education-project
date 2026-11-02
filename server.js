@@ -17,11 +17,11 @@ const FILES = {
 };
 
 const MOODS = {
-  steady: "Steady. Offer one coming sitting and one task, in an ordinary length.",
-  curious: "Curious. They can take a slightly longer stretch. Name the next part of a skill and what it rests on.",
-  tired: "Tired. Keep it short. Name the next sitting and one small task. Do not add a second task.",
-  stuck: "Stuck. Give one very small next step on a single skill, and say what finished looks like.",
-  overwhelmed: "Overwhelmed. Name only the next sitting. Say the rest can wait. Do not assign a task unless they asked for one.",
+  steady: "Steady. Offer one coming sitting and one task. If they ask which skills to learn, name the first two in toLearn.",
+  curious: "Curious. They can take a slightly longer stretch. If they ask which skills to learn, name up to three from toLearn, and what the next part of the first one rests on.",
+  tired: "Tired. Keep it short. Name the first skill in toLearn and one small task. Do not add a second skill.",
+  stuck: "Stuck. Give one very small next step on the first skill in toLearn, and say what finished looks like.",
+  overwhelmed: "Overwhelmed. Name only the next sitting. If they asked which skills to learn, name only the first skill in toLearn and say the others can wait. Do not assign a task unless they asked for one.",
 };
 
 function loadEnv() {
@@ -106,6 +106,23 @@ function cleanSkill(item) {
   };
 }
 
+function cleanProposal(item) {
+  if (!item || typeof item !== "object") return null;
+  const name = clip(item.name, 40);
+  if (!name) return null;
+  const room = Number(item.room);
+  const row = {
+    name,
+    field: clip(item.field, 40),
+    stage: clip(item.stage, 40),
+    room: Number.isInteger(room) ? Math.max(0, Math.min(4, room)) : null,
+    why: clip(item.why, 80),
+  };
+  const where = clip(item.where, 120);
+  if (where) row.where = where;
+  return row;
+}
+
 function cleanTask(item) {
   if (!item || typeof item !== "object") return null;
   const name = clip(item.name, 80);
@@ -128,6 +145,7 @@ function cleanSnapshot(raw) {
     agenda: take(src.agenda, 8, cleanSitting),
     open: take(src.open, 8, cleanOpen),
     skills: take(src.skills, 16, cleanSkill),
+    toLearn: take(src.toLearn, 6, cleanProposal),
     tasks: take(src.tasks, 12, cleanTask),
   };
 }
@@ -146,7 +164,7 @@ function cleanMessages(raw) {
 
 function systemPrompt(mood, snapshot) {
   return [
-    "You are the Continuum atelier assistant. You speak to one student about their own coming sittings and about a task that could move a skill.",
+    "You are the Continuum atelier assistant. You speak to one student about their own coming sittings, about a task that could move a skill, and about which skills to work on from their current stages.",
     `The student's name is ${snapshot.name || "the student"}. Today in the atelier is ${snapshot.today || "the date in the record"}. Use that date. Do not use any other calendar.`,
     "Use only the record below. If a sitting, task, or skill is not in the record, say it is not on this plan.",
     "A sitting holds a place. Registering does not add a mark and does not take a project seat. Lectures are 0 points. A workshop or a project can place up to 4 points on each skill it elicits, and only when the work is scored. The line keeps the furthest stage. No evidence yet is not 0 points. Room is how many points a later mark could still add, up to 4.",
@@ -154,7 +172,8 @@ function systemPrompt(mood, snapshot) {
     `The student's mood right now is ${mood}. ${MOODS[mood]}`,
     "This mood replaces any mood from earlier in the conversation. Name the mood in the first sentence, and let it change what you ask them to do.",
     "When you suggest a task, use a task from the record, or practice on a part of a skill that still has room. Say which skill it would move. Do not invent a new assignment.",
-    "Write plain sentences. No headings and no bullet lists. At most 90 words. If the mood is tired, at most 45 words and only one task. If the mood is overwhelmed, at most 40 words, name the next sitting, and do not assign a task unless the student asked for one.",
+    "toLearn is this student's progress, already put in order. Shared subjects short of proficient come first, then skills already started and still short of proficient, then room left before advanced. When they ask which skills to learn, or when you suggest what to work on, propose only skills from toLearn, in that order. Name the skill, its field, and its stage. Use the why. If where is set, that sitting can carry the skill. Naming it does not register them. If toLearn is empty, say the lines you can see are as far as a skill goes. A proposal is advice. It does not place a mark.",
+    "Write plain sentences. No headings and no bullet lists. At most 90 words, or 120 when they ask which skills to learn and the mood is steady or curious. If the mood is tired, at most 45 words and only one skill. If the mood is overwhelmed, at most 40 words, name the next sitting, and do not assign a task unless the student asked for one.",
     "",
     "Record:",
     JSON.stringify(snapshot),

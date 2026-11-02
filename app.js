@@ -67,6 +67,7 @@
   ];
   const ASSISTANT_PROMPTS = [
     { id: "coming", label: "What is coming up for me?" },
+    { id: "skills", label: "Which skills should I work on?" },
     { id: "task", label: "Suggest one task that would move a skill." },
     { id: "prepare", label: "What should I prepare before the next sitting?" },
   ];
@@ -3419,6 +3420,74 @@ function levelLabel(n) {
     return rows.filter((row) => row && (row.role === "user" || row.role === "assistant" || row.role === "note") && typeof row.text === "string");
   }
 
+  function skillProgress(personRecord, claim) {
+    const level = levelOf(personRecord.id, claim.id);
+    return {
+      id: claim.id,
+      name: claim.name,
+      field: field(claim.field).name,
+      stage: level == null ? "no evidence yet" : levelLabel(level),
+      room: pointsStillOpen(personRecord.id, claim.id),
+      level: level == null ? -1 : level,
+      floor: A.floorIds.includes(claim.id),
+    };
+  }
+
+  function skillWhy(row) {
+    if (row.floor && row.level < A.gate) return "Shared subject still short of proficient.";
+    if (row.level < 0) return "No evidence yet. That is not 0 points.";
+    if (row.level < A.gate) return "Started, and still short of proficient.";
+    return "Room left before advanced.";
+  }
+
+  function sittingForSkill(personRecord, skillId) {
+    const rows = allSessions()
+      .filter((item) => sittingOpen(item) && item.kind !== "lecture")
+      .sort(compareSittings);
+    const elicits = (item) => {
+      const parent = sessionParent(item);
+      return !!(parent && Array.isArray(parent.elicits) && parent.elicits.includes(skillId));
+    };
+    const mine = rows.find((item) => elicits(item) && rosterOf(item).includes(personRecord.id));
+    const openSeat = rows.find((item) => elicits(item) && !rosterOf(item).includes(personRecord.id) && placesOpen(item) !== "Full");
+    const pick = mine || openSeat;
+    return pick ? `${sessionTitle(pick)} on ${formatDate(pick.date)}` : "";
+  }
+
+  function skillsToLearn(personRecord) {
+    const rows = A.competencies.map((claim) => skillProgress(personRecord, claim));
+    const byLevel = (a, b) => a.level - b.level || a.name.localeCompare(b.name);
+    const chosen = [];
+    const floorOpen = rows
+      .filter((row) => row.floor && row.level < A.gate)
+      .sort((a, b) => a.level - b.level || A.floorIds.indexOf(a.id) - A.floorIds.indexOf(b.id));
+    chosen.push(...floorOpen);
+    const started = rows.filter((row) => !row.floor && row.level >= 0 && row.level < A.gate).sort(byLevel);
+    for (const row of started) {
+      if (chosen.length >= 6) break;
+      chosen.push(row);
+    }
+    if (!chosen.length) {
+      const stretch = rows.filter((row) => row.level >= A.gate && row.room > 0).sort(byLevel);
+      chosen.push(...stretch.slice(0, 3));
+    }
+    if (!chosen.length) {
+      chosen.push(...rows.filter((row) => row.level < 0).sort(byLevel).slice(0, 4));
+    }
+    return chosen.slice(0, 6).map((row) => {
+      const item = {
+        name: row.name,
+        field: row.field,
+        stage: row.stage,
+        room: row.room,
+        why: skillWhy(row),
+      };
+      const where = sittingForSkill(personRecord, row.id);
+      if (where) item.where = where;
+      return item;
+    });
+  }
+
   function assistantSnapshot(personRecord) {
     const agenda = allSessions()
       .filter((item) => sittingOpen(item) && rosterOf(item).includes(personRecord.id))
@@ -3497,6 +3566,7 @@ function levelLabel(n) {
       agenda,
       open,
       skills,
+      toLearn: skillsToLearn(personRecord),
       tasks: tasks.slice(0, 12),
     };
   }
@@ -3635,14 +3705,14 @@ function levelLabel(n) {
     return `<section class="assistant" id="assistant" aria-labelledby="assistant-title">
       <p class="eyebrow">Atelier assistant</p>
       <h3 id="assistant-title">A word before you start</h3>
-      <p>Ask about a coming sitting, or for a task that would move a skill. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
+      <p>Ask about a coming sitting, a task, or which skills to work on from where you are now. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
       <p class="eyebrow" id="mood-label">How you feel</p>
       <div class="moods" role="group" aria-labelledby="mood-label">${moods}</div>
-      <p class="muted">Steady keeps to one sitting and one task. Curious can go a step further. Tired and stuck stay small. Overwhelmed names the next sitting and leaves the rest.</p>
+      <p class="muted">Steady keeps to one sitting and up to two skills. Curious can go a step further. Tired and stuck stay with one skill. Overwhelmed names the next sitting and leaves the rest.</p>
       <div class="assistant-prompts">${prompts}</div>
       <div class="assistant-log" id="assistant-log" aria-live="polite">${log}</div>
       <form class="stack-form" data-form="assistant">
-        <label for="assistant-q">Ask about a sitting or a task</label>
+        <label for="assistant-q">Ask about a sitting, a task, or a skill</label>
         <textarea id="assistant-q" name="q" maxlength="600">${esc(assistantDraft)}</textarea>
         <div class="action-row">
           <button type="submit" class="primary"${waiting ? " disabled" : ""}>${waiting ? "Looking…" : "Send"}</button>
