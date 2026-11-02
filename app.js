@@ -57,6 +57,7 @@
   let assistantBusyFor = "";
   let assistantNotice = "";
   let assistantToken = 0;
+  let assistantOpen = false;
 
   const ASSISTANT_MOODS = [
     { id: "steady", label: "Steady" },
@@ -3621,8 +3622,8 @@ function levelLabel(n) {
     };
     persist();
     render();
-    const panel = document.getElementById("assistant");
-    if (panel) panel.scrollIntoView({ block: "nearest" });
+    const log = document.getElementById("assistant-log");
+    if (log) log.scrollTop = log.scrollHeight;
     fetch("/api/assistant", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3653,8 +3654,9 @@ function levelLabel(n) {
       assistantBusyFor = "";
       persist();
       render();
+      if (!assistantOpen) return;
       const log = document.getElementById("assistant-log");
-      if (log) log.scrollIntoView({ block: "nearest" });
+      if (log) log.scrollTop = log.scrollHeight;
       const input = document.getElementById("assistant-q");
       if (input) input.focus({ preventScroll: true });
     });
@@ -3676,8 +3678,33 @@ function levelLabel(n) {
     }
     persist();
     render();
+    if (!assistantOpen) return;
     const input = document.getElementById("assistant-q");
     if (input) input.focus({ preventScroll: true });
+  }
+
+  function assistantHeadSVG() {
+    return `<svg viewBox="0 0 88 88" aria-hidden="true" focusable="false">
+      <ellipse cx="16" cy="50" rx="6.5" ry="8" fill="#f3d2c6" stroke="#1c1917" stroke-width="1.5"/>
+      <path d="M26 28 C20 32 15 40 17 52 C20 68 32 78 48 78 C68 78 80 64 78 48 C76 30 64 20 48 20 C39 20 32 23 26 28Z" fill="#fffaf4" stroke="#1c1917" stroke-width="1.6" stroke-linejoin="round"/>
+      <ellipse cx="76" cy="46" rx="5" ry="7" fill="#f6ddd2" stroke="#1c1917" stroke-width="1.4"/>
+      <path d="M22 32 C26 14 50 10 64 20 C70 24 68 32 58 31 C44 28 32 34 22 32Z" fill="#2c4578"/>
+      <circle cx="63" cy="16" r="3.4" fill="#a3482a"/>
+      <path d="M30 24 C27 13 37 12 35 23" fill="none" stroke="#1c1917" stroke-width="1.6" stroke-linecap="round"/>
+      <ellipse cx="32" cy="58" rx="5.2" ry="3" fill="#e7b09a"/>
+      <ellipse cx="64" cy="55" rx="5" ry="2.8" fill="#e7b09a"/>
+      <path d="M24 42 H35" stroke="#1c1917" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M50 34 Q58 29 67 35" fill="none" stroke="#1c1917" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="30" cy="48" r="2.5" fill="#1c1917"/>
+      <g class="assistant-eye">
+        <circle cx="58" cy="45" r="6.4" fill="#1c1917"/>
+        <circle cx="60.2" cy="42.8" r="1.8" fill="#fffaf4"/>
+      </g>
+      <circle cx="58" cy="45" r="8.4" fill="none" stroke="#7a3e4a" stroke-width="1.35"/>
+      <path d="M66 49 Q73 53 71 57" fill="none" stroke="#7a3e4a" stroke-width="1.1" stroke-linecap="round"/>
+      <path d="M30 60 Q46 73 64 59" fill="none" stroke="#1c1917" stroke-width="1.7" stroke-linecap="round"/>
+      <rect x="44" y="62" width="4" height="4.4" rx="0.7" fill="#fffaf4" stroke="#1c1917" stroke-width="1"/>
+    </svg>`;
   }
 
   function assistantPanel(personRecord) {
@@ -3702,15 +3729,22 @@ function levelLabel(n) {
       if (waiting) log += `<p class="assistant-wait">Looking at your week and your mood.</p>`;
     }
     const status = waiting ? "" : assistantNotice;
-    return `<section class="assistant" id="assistant" aria-labelledby="assistant-title">
-      <p class="eyebrow">Atelier assistant</p>
-      <h3 id="assistant-title">A word before you start</h3>
-      <p>Ask about a coming sitting, a task, or which skills to work on from where you are now. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
-      <p class="eyebrow" id="mood-label">How you feel</p>
-      <div class="moods" role="group" aria-labelledby="mood-label">${moods}</div>
-      <p class="muted">Steady keeps to one sitting and up to two skills. Curious can go a step further. Tired and stuck stay with one skill. Overwhelmed names the next sitting and leaves the rest.</p>
-      <div class="assistant-prompts">${prompts}</div>
-      <div class="assistant-log" id="assistant-log" aria-live="polite">${log}</div>
+    return `<section class="assistant" id="assistant" role="dialog" aria-labelledby="assistant-title" tabindex="-1"${assistantOpen ? "" : " hidden"}>
+      <div class="assistant-top">
+        <div>
+          <p class="eyebrow">Atelier assistant</p>
+          <h3 id="assistant-title">A word before you start</h3>
+        </div>
+        <button type="button" class="assistant-close" data-action="assistant-close">Close</button>
+      </div>
+      <div class="assistant-scroll">
+        <p>Ask about a coming sitting, a task, or which skills to work on from where you are now. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
+        <p class="eyebrow" id="mood-label">How you feel</p>
+        <div class="moods" role="group" aria-labelledby="mood-label">${moods}</div>
+        <div class="assistant-prompts">${prompts}</div>
+        <p class="muted">Steady keeps to one sitting and up to two skills. Curious can go a step further. Tired and stuck stay with one skill. Overwhelmed names the next sitting and leaves the rest.</p>
+        <div class="assistant-log" id="assistant-log" aria-live="polite">${log}</div>
+      </div>
       <form class="stack-form" data-form="assistant">
         <label for="assistant-q">Ask about a sitting, a task, or a skill</label>
         <textarea id="assistant-q" name="q" maxlength="600">${esc(assistantDraft)}</textarea>
@@ -3721,6 +3755,17 @@ function levelLabel(n) {
       </form>
       <p id="assistant-status" class="muted" role="status">${esc(status)}</p>
     </section>`;
+  }
+
+  function assistantDock(personRecord) {
+    const openLabel = assistantOpen ? "Close the atelier assistant" : "Open the atelier assistant";
+    return `<div class="assistant-dock">
+      ${assistantPanel(personRecord)}
+      <button type="button" class="assistant-head" data-action="assistant-toggle" aria-expanded="${assistantOpen ? "true" : "false"}" aria-controls="assistant" aria-haspopup="dialog" aria-label="${openLabel}">
+        ${assistantOpen ? "" : `<span class="assistant-psst" aria-hidden="true">Psst</span>`}
+        ${assistantHeadSVG()}
+      </button>
+    </div>`;
   }
 
   function studentDashInner(personRecord, options = {}) {
@@ -3737,7 +3782,7 @@ function levelLabel(n) {
         <p class="lede">Open a field, take a place at a workshop, or look at a project that is meeting. Search finds a skill, a material, a lecture, or a sitting by name.</p>
       </header>
       ${planNoticeHTML()}
-      ${options.assistant ? assistantPanel(personRecord) : ""}
+      ${options.assistant ? assistantDock(personRecord) : ""}
       ${skillCloud(personRecord)}
       <section class="ask" aria-labelledby="learn-title">
         <h3 class="section-title" id="learn-title">What you can learn</h3>
@@ -4248,6 +4293,12 @@ function levelLabel(n) {
     return `${banner}<p id="health" class="vh" data-health="${status}">${esc(problems.join("; ") || "ok")}</p>`;
   }
 
+  function fitAssistant() {
+    const mast = document.querySelector(".mast");
+    const height = mast ? Math.ceil(mast.getBoundingClientRect().height) : 0;
+    document.documentElement.style.setProperty("--mast-h", height + "px");
+  }
+
   function render(options = {}) {
     rememberAssistantDraft();
     const y = window.scrollY;
@@ -4261,8 +4312,10 @@ function levelLabel(n) {
         }
       : null;
     renderChrome();
+    document.body.classList.toggle("has-assistant", state.role === "student" && state.route === "dashboard");
     const root = document.getElementById("app");
     root.innerHTML = healthHTML(health()) + page();
+    fitAssistant();
     if (options.scroll === "top") {
       window.scrollTo(0, 0);
       jumpToRoute();
@@ -4310,9 +4363,24 @@ function levelLabel(n) {
   function onClick(event) {
     const find = document.getElementById("find");
     if (find && !find.contains(event.target)) hideSearchList();
-    const node = event.target.closest("[data-action]");
+    const target = event.target instanceof Element ? event.target : null;
+    const insideDock = target ? target.closest(".assistant-dock") : null;
+    const node = target ? target.closest("[data-action]") : null;
+    if (assistantOpen && !insideDock) {
+      assistantOpen = false;
+      render();
+      if (!node) return;
+    }
     if (!node) return;
     const action = node.dataset.action;
+    if (action === "assistant-toggle" || action === "assistant-close") {
+      if (state.role !== "student") return;
+      assistantOpen = action === "assistant-toggle" ? !assistantOpen : false;
+      render();
+      const focusNode = assistantOpen ? document.getElementById("assistant") : document.querySelector(".assistant-head");
+      if (focusNode) focusNode.focus({ preventScroll: true });
+      return;
+    }
     if (action === "cloud-zoom") {
       if (node.dataset.dir === "in") {
         cloudZoom = 2;
@@ -4525,6 +4593,7 @@ function levelLabel(n) {
       assistantBusy = false;
       assistantBusyFor = "";
       assistantToken += 1;
+      assistantOpen = false;
       render();
     }
   }
@@ -4788,6 +4857,16 @@ function levelLabel(n) {
   }
 
   function onKeydown(event) {
+    if (event.key === "Escape" && assistantOpen) {
+      const list = document.getElementById("find-list");
+      if (!list || list.hidden) {
+        assistantOpen = false;
+        render();
+        const head = document.querySelector(".assistant-head");
+        if (head) head.focus();
+        return;
+      }
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     const node = event.target.closest(".network .node, .field-chart .field-dot");
     if (!node) return;
@@ -4823,6 +4902,7 @@ function levelLabel(n) {
     document.body.addEventListener("submit", onSubmit);
     document.body.addEventListener("input", onInput);
     document.body.addEventListener("keydown", onKeydown);
+    window.addEventListener("resize", fitAssistant);
   }
 
   init();
