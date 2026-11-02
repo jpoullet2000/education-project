@@ -7,7 +7,7 @@
   const A = globalThis.ATELIER;
   const KEY = "continuum-atelier-v1";
 
-  const ROUTES = ["dashboard", "fields", "model", "panel", "map", "projects", "workshops", "activities", "library", "cohort", "report"];
+  const ROUTES = ["dashboard", "fields", "model", "panel", "map", "projects", "workshops", "activities", "library", "plan", "cohort", "report", "search"];
 
   function blank() {
     return {
@@ -31,12 +31,22 @@
       contributions: [],
       materialUses: {},
       materialRatings: {},
+      planKind: "all",
+      registrations: {},
+      withdrawals: {},
+      planned: [],
     };
   }
 
   let state = blank();
   let libraryNotice = "";
+  let planNotice = "";
+  let searchActive = -1;
   let materialSerial = 0;
+  let sittingSerial = 0;
+  let cloudZoom = 1;
+  let cloudFocus = "";
+  let cloudStudentId = "";
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -57,11 +67,43 @@
     }[ch]));
   }
 
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
   function formatDate(iso) {
     if (!iso) return "";
-    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const [y, m, d] = iso.split("-").map(Number);
-    return `${d} ${months[m - 1]} ${y}`;
+    if (!y || !m || !d || !MONTHS[m - 1]) return "";
+    return `${d} ${MONTHS[m - 1]} ${y}`;
+  }
+
+  function formatMonth(iso) {
+    const [y, m] = iso.split("-").map(Number);
+    if (!y || !MONTHS[m - 1]) return "";
+    return `${MONTHS[m - 1]} ${y}`;
+  }
+
+  function weekdayName(iso) {
+    const stamp = Date.parse(iso + "T12:00:00Z");
+    if (Number.isNaN(stamp)) return "";
+    return WEEKDAYS[new Date(stamp).getUTCDay()];
+  }
+
+  function normalizeTime(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!match) return "";
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59) return "";
+    return String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0");
+  }
+
+  function timeValue(value) {
+    const normal = normalizeTime(value);
+    if (!normal) return -1;
+    const [hour, minute] = normal.split(":").map(Number);
+    return hour * 60 + minute;
   }
 
   function formatWhen(iso) {
@@ -303,6 +345,14 @@ function levelLabel(n) {
     return "Not your seat";
   }
 
+  function projectAvailability(personRecord, projectId) {
+    if (personRecord.projectIds.includes(projectId)) {
+      return state.role === "student" ? "You are on this project." : `${firstName(personRecord)} is on this project.`;
+    }
+    if (personRecord.recommendedProjectId === projectId) return "A seat is waiting.";
+    return "Open to read.";
+  }
+
   function actionStatus(personRecord, source, parent) {
     if (source === "workshop") return `${parent.name} · ${workshopStatusLabel(personRecord.workshops[parent.id])}`;
     return `${parent.name} · ${projectStatusLabel(personRecord, parent.id)}`;
@@ -484,6 +534,10 @@ function levelLabel(n) {
       contributions: state.contributions,
       materialUses: state.materialUses,
       materialRatings: state.materialRatings,
+      planKind: state.planKind,
+      registrations: state.registrations,
+      withdrawals: state.withdrawals,
+      planned: state.planned,
     };
     try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch (err) { /* private mode */ }
   }
@@ -524,6 +578,12 @@ function levelLabel(n) {
     });
     state.materialUses = cleanUseMap(state.materialUses);
     state.materialRatings = cleanRatingMap(state.materialRatings);
+    if (!["all", "workshop", "project", "lecture"].includes(state.planKind)) state.planKind = "all";
+    if (!state.registrations || typeof state.registrations !== "object" || Array.isArray(state.registrations)) state.registrations = {};
+    if (!state.withdrawals || typeof state.withdrawals !== "object" || Array.isArray(state.withdrawals)) state.withdrawals = {};
+    state.planned = cleanPlanned(state.planned);
+    state.registrations = cleanRegistrationMap(state.registrations);
+    state.withdrawals = cleanWithdrawalMap(state.withdrawals);
   }
 
   function cleanContributor(value) {
@@ -568,6 +628,109 @@ function levelLabel(n) {
     return { id, title, summary, medium: item.medium, minutes, fields, competencies, contributor, brought };
   }
 
+  function cleanPlanned(value) {
+    if (!Array.isArray(value)) return [];
+    const taken = new Set(A.sessions.map((item) => item.id));
+    const out = [];
+    for (const item of value) {
+      const cleaned = cleanPlannedItem(item, taken);
+      if (!cleaned) continue;
+      taken.add(cleaned.id);
+      out.push(cleaned);
+    }
+    return out;
+  }
+
+  function cleanPlannedItem(item, taken) {
+    if (!item || typeof item !== "object") return null;
+    const id = typeof item.id === "string" ? item.id : "";
+    if (!/^sit-[a-z0-9-]+$/.test(id) || taken.has(id)) return null;
+    if (!["workshop", "project", "lecture"].includes(item.kind)) return null;
+    const date = typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date) ? item.date : "";
+    const start = normalizeTime(item.start);
+    const end = normalizeTime(item.end);
+    if (!date || !start || !end || timeValue(end) <= timeValue(start)) return null;
+    const place = String(item.place || "").trim().slice(0, 80);
+    if (!place || !person(item.hostId)) return null;
+    const capacity = Number(item.capacity);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 40) return null;
+    const note = String(item.note || "").trim().slice(0, 240);
+    let ref = "";
+    let title = "";
+    let summary = "";
+    let fieldId = "";
+    if (item.kind === "workshop") {
+      if (!workshop(item.ref)) return null;
+      ref = item.ref;
+    } else if (item.kind === "project") {
+      if (!project(item.ref)) return null;
+      ref = item.ref;
+    } else {
+      title = String(item.title || "").trim().slice(0, 140);
+      summary = String(item.summary || "").trim().slice(0, 400);
+      if (!title || !summary || !field(item.field)) return null;
+      fieldId = item.field;
+    }
+    return {
+      id,
+      kind: item.kind,
+      ref,
+      title,
+      summary,
+      field: fieldId,
+      date,
+      start,
+      end,
+      place,
+      hostId: item.hostId,
+      capacity,
+      note,
+    };
+  }
+
+  function seedRoster(id) {
+    const item = byId(A.sessions, id);
+    return item && Array.isArray(item.roster) ? item.roster : [];
+  }
+
+  function cleanStudentList(list) {
+    const ids = [];
+    if (!Array.isArray(list)) return ids;
+    for (const id of list) {
+      if (typeof id === "string" && student(id) && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+  }
+
+  function sessionAllowed(id) {
+    if (A.sessions.some((item) => item.id === id)) return true;
+    return state.planned.some((item) => item.id === id);
+  }
+
+  function cleanRegistrationMap(value) {
+    const out = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+    for (const [id, list] of Object.entries(value)) {
+      if (!sessionAllowed(id)) continue;
+      const seed = seedRoster(id);
+      const ids = cleanStudentList(list).filter((studentId) => !seed.includes(studentId));
+      if (ids.length) out[id] = ids;
+    }
+    return out;
+  }
+
+  function cleanWithdrawalMap(value) {
+    const out = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+    for (const [id, list] of Object.entries(value)) {
+      if (!byId(A.sessions, id)) continue;
+      const seed = seedRoster(id);
+      const ids = cleanStudentList(list).filter((studentId) => seed.includes(studentId));
+      if (ids.length) out[id] = ids;
+    }
+    return out;
+  }
+
   function knownMaterialId(id) {
     if (A.materials.some((item) => item.id === id)) return true;
     return state.contributions.some((item) => item.id === id);
@@ -606,15 +769,35 @@ function levelLabel(n) {
 
   function readRoute() {
     const raw = (location.hash || "#dashboard").replace(/^#/, "");
-    const [route, param] = raw.split("/");
+    const cut = raw.indexOf("/");
+    const route = cut === -1 ? raw : raw.slice(0, cut);
+    let param = cut === -1 ? "" : raw.slice(cut + 1);
+    try { param = decodeURIComponent(param); } catch (err) { /* keep the raw piece */ }
+    param = param.slice(0, 80);
     if (!ROUTES.includes(route)) return { route: "dashboard", param: "" };
-    return { route, param: param || "" };
+    return { route, param };
   }
 
   function rememberField(route) {
     if (route.route === "fields" && field(route.param)) {
       state.field = route.param;
       state.skill = "all";
+    }
+    if (route.route === "fields" && competency(route.param)) {
+      const claim = competency(route.param);
+      state.field = claim.field;
+      state.skill = claim.id;
+      state.competencyId = claim.id;
+    }
+  }
+
+  function applyRoute(next) {
+    state.route = next.route;
+    state.param = next.param;
+    rememberField(next);
+    if (next.route === "library" && materialById(next.param)) {
+      state.field = "all";
+      state.medium = "all";
     }
   }
 
@@ -740,6 +923,65 @@ function levelLabel(n) {
       for (const rating of row.ratings) {
         expect(!!student(rating.studentId) && row.uses.includes(rating.studentId), "activity rater " + id);
         expect(rating.score >= 1 && rating.score <= 4, "activity score " + id);
+      }
+    }
+    expect(Array.isArray(A.sessions) && A.sessions.length > 0, "sessions");
+    const sessionIds = [];
+    const sessionKinds = new Set(["workshop", "project", "lecture"]);
+    for (const item of A.sessions) {
+      sessionIds.push(item.id);
+      expect(sessionKinds.has(item.kind), "session kind " + item.id);
+      expect(/^\d{4}-\d{2}-\d{2}$/.test(item.date), "session date " + item.id);
+      expect(normalizeTime(item.start) === item.start && normalizeTime(item.end) === item.end, "session clock " + item.id);
+      expect(timeValue(item.end) > timeValue(item.start), "session span " + item.id);
+      expect(typeof item.place === "string" && item.place.trim().length > 0, "session place " + item.id);
+      expect(!!person(item.hostId), "session host " + item.id);
+      expect(Number.isInteger(item.capacity) && item.capacity >= 1, "session capacity " + item.id);
+      expect(Array.isArray(item.roster), "session roster " + item.id);
+      expect(typeof item.note === "string", "session note " + item.id);
+      const seen = new Set();
+      for (const studentId of item.roster) {
+        expect(!!student(studentId) && !seen.has(studentId), "session student " + item.id + " " + studentId);
+        seen.add(studentId);
+        expect(student(studentId).started <= item.date, "session before start " + item.id + " " + studentId);
+      }
+      expect(item.roster.length <= item.capacity, "session over capacity " + item.id);
+      if (item.kind === "workshop") expect(!!workshop(item.ref), "session workshop " + item.id);
+      if (item.kind === "project") expect(!!project(item.ref), "session project " + item.id);
+      if (item.kind === "lecture") {
+        expect(item.ref === "", "lecture ref " + item.id);
+        expect(!!field(item.field), "lecture field " + item.id);
+        expect(typeof item.title === "string" && item.title.trim().length > 0, "lecture title " + item.id);
+        expect(typeof item.summary === "string" && item.summary.trim().length > 0, "lecture summary " + item.id);
+      }
+    }
+    expect(new Set(sessionIds).size === sessionIds.length, "unique session ids");
+    expect(A.sessions.some((item) => item.date < A.today), "held sitting");
+    expect(A.sessions.some((item) => item.kind === "workshop" && item.date >= A.today), "future workshop");
+    expect(A.sessions.some((item) => item.kind === "project" && item.date >= A.today), "future project");
+    expect(A.sessions.some((item) => item.kind === "lecture" && item.date >= A.today), "future lecture");
+    expect(A.sessions.some((item) => item.kind === "workshop" && item.date >= A.today && item.roster.length < item.capacity), "open workshop place");
+    for (const personRecord of A.students) {
+      for (const [workshopId, status] of Object.entries(personRecord.workshops)) {
+        if (status !== "enrolled") continue;
+        const seated = A.sessions.some((item) => item.kind === "workshop" && item.ref === workshopId && item.date >= A.today && item.roster.includes(personRecord.id));
+        expect(seated, "enrolled sitting " + personRecord.id + " " + workshopId);
+      }
+      for (const projectId of personRecord.projectIds) {
+        const seated = A.sessions.some((item) => item.kind === "project" && item.ref === projectId && item.date >= A.today && item.roster.includes(personRecord.id));
+        expect(seated, "project sitting " + personRecord.id + " " + projectId);
+      }
+    }
+    for (let i = 0; i < A.sessions.length; i += 1) {
+      for (let j = i + 1; j < A.sessions.length; j += 1) {
+        const left = A.sessions[i];
+        const right = A.sessions[j];
+        if (left.date !== right.date) continue;
+        if (left.start >= right.end || right.start >= left.end) continue;
+        expect(left.hostId !== right.hostId, "host clash " + left.id + " " + right.id);
+        for (const studentId of left.roster) {
+          expect(!right.roster.includes(studentId), "student clash " + left.id + " " + right.id + " " + studentId);
+        }
       }
     }
     return problems;
@@ -1283,14 +1525,17 @@ function levelLabel(n) {
     const pips = fields.map((id) => `<span class="pill field-${id}">${esc(field(id).short)}</span>`).join("");
     const names = seats.on.map((personRecord) => personRecord.name).join(", ") || "Open seat";
     const viewer = current();
+    const next = nextSitting("project", item.id);
+    const when = next ? `${formatDate(next.date)}, ${next.start}–${next.end}, ${next.place}. ${placesOpen(next)}` : "None on the plan";
     return `<article class="card">
       <p class="eyebrow">${esc(item.place)}</p>
       <h3><a href="#projects/${item.id}">${esc(item.name)}</a></h3>
       <p>${esc(item.summary)}</p>
       <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b> <span>across ${item.elicits.length} skills</span></p>
-      <p class="meta">${esc(firstName(viewer))}: ${esc(projectStatusLabel(viewer, item.id))}.</p>
+      <p class="meta">${esc(projectAvailability(viewer, item.id))}</p>
       <p class="tags">${pips}</p>
       <p class="meta">On it: ${esc(names)}</p>
+      <p class="meta">Next sitting: ${esc(when)}. <a href="#plan">See the days</a></p>
     </article>`;
   }
 
@@ -1317,6 +1562,10 @@ function levelLabel(n) {
       ${activityList(item.activities)}
       <p><strong>On it.</strong> ${on}</p>
       ${invited ? `<p><strong>Scaffolded seat, not yet taken.</strong> ${invited}</p>` : ""}
+      <h3 class="section-title">Sittings</h3>
+      <p class="muted">A place at a sitting is attendance. It does not put you on the project. Register from a student account.</p>
+      ${planNoticeHTML()}
+      ${sittingSection("project", item.id)}
       <h3 class="section-title">The task, in parts</h3>
       <div class="grid-2">${features}</div>
       <p class="rule">${esc(item.varied)}</p>
@@ -1332,11 +1581,455 @@ function levelLabel(n) {
     return `<article class="page" data-page="projects">
       <header class="page-head">
         <p class="eyebrow">Task models</p>
-        <h2>Projects across fields.</h2>
-        <p class="lede">A project is a situation built to elicit particular claims. Finishing the weeks is not the credit. The work products are. Anyone can read a brief. A score requires the observation.</p>
+        <h2>Projects you can take up.</h2>
+        <p class="lede">A project is a situation built so the work can place marks on particular skills. Anyone can read a brief. The card shows the next time it meets. Registering holds a place at that sitting. The seat on the project is separate, and the score comes from the work products.</p>
       </header>
       <div class="grid-2">${A.projects.map(projectCard).join("")}</div>
     </article>`;
+  }
+
+  function kindLabel(kind) {
+    if (kind === "workshop") return "Workshop";
+    if (kind === "project") return "Project";
+    return "Lecture";
+  }
+
+  function allSessions() {
+    return A.sessions.concat(Array.isArray(state.planned) ? state.planned : []);
+  }
+
+  function sessionById(id) {
+    return allSessions().find((item) => item.id === id) || null;
+  }
+
+  function sessionParent(item) {
+    if (!item) return null;
+    if (item.kind === "workshop") return workshop(item.ref);
+    if (item.kind === "project") return project(item.ref);
+    return null;
+  }
+
+  function sessionTitle(item) {
+    if (!item) return "Sitting";
+    if (item.kind === "lecture") return item.title || "Lecture";
+    const parent = sessionParent(item);
+    return parent ? parent.name : (item.title || "Sitting");
+  }
+
+  function sessionHref(item) {
+    if (item.kind === "workshop") return "#workshops";
+    if (item.kind === "project") return "#projects/" + item.ref;
+    return "#plan";
+  }
+
+  function sessionBlurb(item) {
+    if (item.kind === "lecture") return item.summary || "";
+    if (item.note) return item.note;
+    const parent = sessionParent(item);
+    return parent ? parent.summary : "";
+  }
+
+  function sittingOpen(item) {
+    return item.date >= A.today;
+  }
+
+  function compareSittings(a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    if (a.start !== b.start) return a.start < b.start ? -1 : 1;
+    return sessionTitle(a).localeCompare(sessionTitle(b));
+  }
+
+  function sittingsOf(kind, ref) {
+    return allSessions().filter((item) => item.kind === kind && item.ref === ref).sort(compareSittings);
+  }
+
+  function nextSitting(kind, ref) {
+    return sittingsOf(kind, ref).find((item) => sittingOpen(item)) || null;
+  }
+
+  function rosterOf(item) {
+    const removed = new Set((state.withdrawals && state.withdrawals[item.id]) || []);
+    const extra = (state.registrations && state.registrations[item.id]) || [];
+    const seed = Array.isArray(item.roster) ? item.roster : [];
+    const ids = [];
+    for (const id of seed.concat(extra)) {
+      if (!student(id) || removed.has(id) || ids.includes(id)) continue;
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  function sittingClash(studentId, item) {
+    return allSessions().find((other) => {
+      if (other.id === item.id || other.date !== item.date) return false;
+      if (item.start >= other.end || other.start >= item.end) return false;
+      return rosterOf(other).includes(studentId);
+    }) || null;
+  }
+
+  function placeCount(item) {
+    const count = rosterOf(item).length;
+    const word = item.capacity === 1 ? "place" : "places";
+    return `${count} of ${item.capacity} ${word}`;
+  }
+
+  function rosterNames(item) {
+    const names = rosterOf(item).map((id) => student(id).name).sort((a, b) => a.localeCompare(b));
+    if (!names.length) return "No one has registered.";
+    return `Registered: ${joinNames(names)}.`;
+  }
+
+  function registerFor(sessionId) {
+    const item = sessionById(sessionId);
+    if (!item || state.role !== "student" || !sittingOpen(item)) return "closed";
+    const me = current().id;
+    if (rosterOf(item).includes(me)) return "already";
+    if (rosterOf(item).length >= item.capacity) return "full";
+    if (sittingClash(me, item)) return "clash";
+    const dropped = ((state.withdrawals && state.withdrawals[item.id]) || []).filter((id) => id !== me);
+    if (dropped.length) state.withdrawals[item.id] = dropped;
+    else delete state.withdrawals[item.id];
+    const seed = Array.isArray(item.roster) ? item.roster : [];
+    if (!seed.includes(me)) {
+      const added = (state.registrations[item.id] || []).slice();
+      if (!added.includes(me)) added.push(me);
+      state.registrations[item.id] = added;
+    }
+    return "ok";
+  }
+
+  function withdrawFrom(sessionId) {
+    const item = sessionById(sessionId);
+    if (!item || state.role !== "student" || !sittingOpen(item)) return false;
+    const me = current().id;
+    if (!rosterOf(item).includes(me)) return false;
+    const added = (state.registrations[item.id] || []).filter((id) => id !== me);
+    if (added.length) state.registrations[item.id] = added;
+    else delete state.registrations[item.id];
+    const seed = Array.isArray(item.roster) ? item.roster : [];
+    if (seed.includes(me)) {
+      const dropped = (state.withdrawals[item.id] || []).slice();
+      if (!dropped.includes(me)) dropped.push(me);
+      state.withdrawals[item.id] = dropped;
+    }
+    return true;
+  }
+
+  function planNoticeHTML() {
+    if (!planNotice) return "";
+    return `<p class="live" id="plan-notice">${esc(planNotice)}</p>`;
+  }
+
+  function whenBlock(item) {
+    const [, month, day] = item.date.split("-");
+    const year = item.date.slice(0, 4);
+    return `<div class="when" aria-hidden="true">
+      <b>${Number(day)}</b>
+      <span>${esc(MONTHS_SHORT[Number(month) - 1])} ${esc(year)}</span>
+      <small>${esc(weekdayName(item.date))}</small>
+    </div>`;
+  }
+
+  function registerButtons(item) {
+    const open = sittingOpen(item);
+    const mine = rosterOf(item).includes(current().id);
+    const full = rosterOf(item).length >= item.capacity;
+    const label = sessionTitle(item);
+    const when = formatDate(item.date);
+    if (!open) return `<p class="muted">Held. Registration is closed.</p>`;
+    if (state.role !== "student") return `<p class="muted">A student registers from their own account.</p>`;
+    if (mine) {
+      return `<div class="action-row">
+        <button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc("Withdraw from " + label + " on " + when)}">Withdraw</button>
+      </div>`;
+    }
+    if (full) return `<div class="action-row"><button type="button" disabled>Full</button></div>`;
+    return `<div class="action-row">
+      <button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc("Register for " + label + " on " + when)}">Register</button>
+    </div>`;
+  }
+
+  function sittingCard(item, domId) {
+    const parent = sessionParent(item);
+    const title = sessionTitle(item);
+    const href = sessionHref(item);
+    const heading = item.kind === "lecture" ? esc(title) : `<a href="${esc(href)}">${esc(title)}</a>`;
+    const mine = rosterOf(item).includes(current().id);
+    const host = person(item.hostId);
+    const fieldName = item.kind === "lecture" && field(item.field) ? field(item.field).name : "";
+    let eyebrow = kindLabel(item.kind);
+    if (item.kind === "lecture" && fieldName) eyebrow += " · " + fieldName;
+    if (item.kind === "workshop" && parent) eyebrow += " · " + parent.kind;
+    if (item.kind === "project" && parent) eyebrow += " · " + parent.place;
+    if (!sittingOpen(item)) eyebrow += " · held";
+    const points = item.kind === "lecture" || !parent
+      ? `<p class="point-offer"><b>0 points</b> <span>${item.kind === "lecture" ? "a lecture is not a mark" : ""}</span></p>`
+      : `<p class="point-offer"><b>${esc(offerPhrase(parent.elicits))}</b></p>`;
+    const yours = mine
+      ? (state.role === "student" ? "You have a place." : `${firstName(current())} has a place.`)
+      : "";
+    const line = `${placeCount(item)} taken. ${rosterNames(item)}${yours ? " " + yours : ""}`;
+    const described = `${title}. ${formatDate(item.date)}, ${item.start} to ${item.end}. ${item.place}.`;
+    return `<article class="card sitting${mine ? " is-yours" : ""}" id="${esc(domId || item.id)}" data-kind="${esc(item.kind)}" aria-label="${esc(described)}">
+      ${whenBlock(item)}
+      <div>
+        <p class="eyebrow">${esc(eyebrow)}</p>
+        <h3>${heading}</h3>
+        <p class="meta">${esc(weekdayName(item.date))} ${esc(formatDate(item.date))} · ${esc(item.start)}–${esc(item.end)} · ${esc(item.place)} · ${esc(host ? host.name : "")}</p>
+        ${points}
+        <p>${esc(sessionBlurb(item))}</p>
+        <p class="meta">${esc(line)}</p>
+        ${registerButtons(item)}
+      </div>
+    </article>`;
+  }
+
+  function sittingCompact(item) {
+    const mine = rosterOf(item).includes(current().id);
+    const open = sittingOpen(item);
+    const title = sessionTitle(item);
+    const when = formatDate(item.date);
+    const host = person(item.hostId);
+    let button = "";
+    if (state.role === "student" && open && mine) {
+      button = `<button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc("Withdraw from " + title + " on " + when)}">Withdraw</button>`;
+    } else if (state.role === "student" && open && rosterOf(item).length < item.capacity) {
+      button = `<button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc("Register for " + title + " on " + when)}">Register</button>`;
+    } else if (open && !mine && rosterOf(item).length >= item.capacity) {
+      button = `<span class="meta">Full</span>`;
+    }
+    let status = "Open.";
+    if (!open) status = "Held.";
+    else if (mine) status = state.role === "student" ? "You have a place." : `${firstName(current())} has a place.`;
+    return `<li id="${esc(item.id)}">
+      <span><a href="#plan">${esc(when)}</a> · ${esc(item.start)}–${esc(item.end)} · ${esc(item.place)}</span>
+      <b>${esc(placeCount(item))}</b>
+      <small>${esc(status)} ${esc(host ? host.name : "")}</small>
+      ${button}
+    </li>`;
+  }
+
+  function sittingSection(kind, ref) {
+    const rows = sittingsOf(kind, ref);
+    if (!rows.length) return `<p class="muted">No sitting is on the plan yet.</p>`;
+    return `<ul class="point-mini">${rows.map(sittingCompact).join("")}</ul>`;
+  }
+
+  function planGlance(personRecord) {
+    const rows = allSessions()
+      .filter((item) => sittingOpen(item) && rosterOf(item).includes(personRecord.id))
+      .sort(compareSittings);
+    if (!rows.length) {
+      const name = firstName(personRecord);
+      return state.role === "student"
+        ? `<p>No place at a coming sitting yet. Register from a workshop or a project above.</p>`
+        : `<p>${esc(name)} has no place at a coming sitting.</p>`;
+    }
+    return `<ul class="point-mini">${rows.map((row) => {
+      const host = person(row.hostId);
+      return `<li>
+        <span><a href="#plan">${esc(sessionTitle(row))}</a> · ${esc(kindLabel(row.kind))}</span>
+        <b>${esc(formatDate(row.date))}</b>
+        <small>${esc(row.start)}–${esc(row.end)} · ${esc(row.place)}${host ? ` · ${esc(host.name)}` : ""}</small>
+      </li>`;
+    }).join("")}</ul>`;
+  }
+
+  function nextSittingLine(personRecord) {
+    const next = allSessions()
+      .filter((item) => sittingOpen(item) && rosterOf(item).includes(personRecord.id))
+      .sort(compareSittings)[0];
+    if (!next) return "No coming sitting.";
+    return `Next sitting: ${sessionTitle(next)}, ${formatDate(next.date)}.`;
+  }
+
+  function syncPlanForm(form) {
+    const pick = form.querySelector('[name="sittingKind"]');
+    if (!pick) return;
+    for (const block of form.querySelectorAll("[data-plan-block]")) {
+      const on = block.dataset.planBlock === pick.value;
+      block.hidden = !on;
+      for (const field of block.querySelectorAll("input, select, textarea")) field.disabled = !on;
+    }
+  }
+
+  function planForm() {
+    if (state.role === "student") {
+      return `<p class="muted">A mentor or the director plans a sitting. You register for one that is already on the books.</p>`;
+    }
+    const workshopOptions = A.workshops.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+    const projectOptions = A.projects.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+    const fieldOptions = A.fields.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+    const hostBlock = state.role === "director"
+      ? `<label>Host
+          <select name="hostId" required>${A.people.map((item) => `<option value="${esc(item.id)}"${item.id === "ortega" ? " selected" : ""}>${esc(item.name)}</option>`).join("")}</select>
+        </label>`
+      : `<p class="meta">Host: ${esc(person(state.mentorId).name)}</p>`;
+    return `<section class="card bring">
+      <p class="eyebrow">Add to the plan</p>
+      <h3>Plan a sitting</h3>
+      <p>File this as ${esc(state.role === "director" ? person("ortega").name : person(state.mentorId).name)}. Students register from their own accounts. A sitting does not add a mark.</p>
+      <form class="stack-form" data-form="plan">
+        <label>Kind
+          <select name="sittingKind" required>
+            <option value="workshop" selected>Workshop sitting</option>
+            <option value="project">Project sitting</option>
+            <option value="lecture">Lecture</option>
+          </select>
+        </label>
+        <div data-plan-block="workshop">
+          <label>Workshop
+            <select name="workshopId" required>${workshopOptions}</select>
+          </label>
+        </div>
+        <div data-plan-block="project" hidden>
+          <label>Project
+            <select name="projectId" required disabled>${projectOptions}</select>
+          </label>
+        </div>
+        <div data-plan-block="lecture" hidden>
+          <label>Title
+            <input name="title" required disabled maxlength="140">
+          </label>
+          <label>Summary
+            <textarea name="summary" required disabled maxlength="400" placeholder="What the lecture is for. It places no mark."></textarea>
+          </label>
+          <label>Field
+            <select name="lectureField" required disabled>${fieldOptions}</select>
+          </label>
+        </div>
+        ${hostBlock}
+        <label>Day
+          <input name="date" type="date" required min="${esc(A.today)}" value="${esc(A.today)}">
+        </label>
+        <label>Start
+          <input name="start" type="time" required value="13:00">
+        </label>
+        <label>End
+          <input name="end" type="time" required value="16:00">
+        </label>
+        <label>Room
+          <input name="place" required maxlength="80" placeholder="Studio hall">
+        </label>
+        <label>Places
+          <input name="capacity" type="number" min="1" max="40" value="12" required>
+        </label>
+        <label>Note
+          <textarea name="note" maxlength="240" placeholder="Optional. What this sitting is for."></textarea>
+        </label>
+        <p class="form-error" data-error role="alert"></p>
+        <button type="submit" class="primary">Put it on the plan</button>
+      </form>
+    </section>`;
+  }
+
+  function planCardList(rows) {
+    if (!rows.length) {
+      return state.role === "student"
+        ? `<p class="empty">You have no place at a coming sitting. Register from the list below.</p>`
+        : `<p class="empty">${esc(firstName(current()))} has no place at a coming sitting.</p>`;
+    }
+    return `<div class="plan-list">${rows.map((item) => sittingCard(item)).join("")}</div>`;
+  }
+
+  function monthGroups(rows, prefix) {
+    if (!rows.length) return `<p class="empty">Nothing in this part of the plan.</p>`;
+    let html = "";
+    let month = "";
+    for (const item of rows) {
+      const key = item.date.slice(0, 7);
+      if (key !== month) {
+        month = key;
+        html += `<h3 class="month-label">${esc(formatMonth(item.date))}</h3>`;
+      }
+      html += sittingCard(item, prefix + item.id);
+    }
+    return `<div class="plan-list">${html}</div>`;
+  }
+
+  function renderPlan() {
+    const personRecord = current();
+    const rows = allSessions()
+      .filter((item) => state.planKind === "all" || item.kind === state.planKind)
+      .sort(compareSittings);
+    const coming = rows.filter((item) => sittingOpen(item));
+    const held = rows.filter((item) => !sittingOpen(item)).slice().sort((a, b) => compareSittings(b, a));
+    const mine = coming.filter((item) => rosterOf(item).includes(personRecord.id));
+    const options = [
+      ["all", "All sittings"],
+      ["workshop", "Workshops"],
+      ["project", "Projects"],
+      ["lecture", "Lectures"],
+    ].map(([id, label]) => `<option value="${id}"${state.planKind === id ? " selected" : ""}>${label}</option>`).join("");
+    const account = state.role === "student"
+      ? `Registering as ${personRecord.name}.`
+      : `Showing places for ${personRecord.name}. A student registers from their own account.`;
+    const yoursTitle = state.role === "student" ? "Your places" : `Places for ${firstName(personRecord)}`;
+    return `<article class="page" data-page="plan" data-student="${esc(personRecord.id)}">
+      <header class="page-head">
+        <p class="eyebrow">Plan · cohort clock ${esc(formatDate(A.today))}</p>
+        <h2>When the work meets.</h2>
+        <p class="lede">Workshops, projects, and lectures are planned as sittings. Each one has a day, a time, a room, and a host. A student registers from their own account. A place at the sitting is not a mark, and it is not a project seat. A lecture is worth 0 points.</p>
+        <p class="meta">${esc(account)}</p>
+      </header>
+      ${planNoticeHTML()}
+      <div class="filters">
+        <label>Show
+          <select name="planKind" data-action="filter">${options}</select>
+        </label>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><b>${coming.length}</b><span>coming up</span></div>
+        <div class="stat"><b>${mine.length}</b><span>${mine.length === 1 ? "place held" : "places held"}</span></div>
+        <div class="stat"><b>${held.length}</b><span>already held</span></div>
+      </div>
+      ${planForm()}
+      <h3 class="section-title">${esc(yoursTitle)}</h3>
+      ${planCardList(mine)}
+      <h3 class="section-title">Coming up</h3>
+      ${monthGroups(coming, "upcoming-")}
+      <h3 class="section-title">Already held</h3>
+      ${monthGroups(held, "held-")}
+    </article>`;
+  }
+
+  function focusSitting(id) {
+    const node = document.getElementById(id)
+      || document.getElementById("upcoming-" + id)
+      || document.getElementById("held-" + id);
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function explainRegistration(sessionId, mode) {
+    const item = sessionById(sessionId);
+    if (!item) return;
+    const title = sessionTitle(item);
+    const when = formatDate(item.date);
+    if (mode === "register") {
+      const result = registerFor(sessionId);
+      if (result === "ok") planNotice = `You have a place at ${title} on ${when}.`;
+      else if (result === "full") planNotice = `${title} on ${when} is full.`;
+      else if (result === "closed") planNotice = `Registration for ${title} is closed.`;
+      else if (result === "clash") {
+        const clash = sittingClash(current().id, item);
+        planNotice = clash
+          ? `You already have a place at ${sessionTitle(clash)} then (${clash.start}–${clash.end}).`
+          : "You already have a place at that time.";
+      } else planNotice = `You already have a place at ${title}.`;
+      persist();
+      render();
+      if (result === "ok") focusSitting(sessionId);
+      else {
+        const note = document.getElementById("plan-notice");
+        if (note) note.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      return;
+    }
+    if (!withdrawFrom(sessionId)) return;
+    planNotice = `You withdrew from ${title} on ${when}.`;
+    persist();
+    render();
+    focusSitting(sessionId);
   }
 
   function renderWorkshops() {
@@ -1352,11 +2045,13 @@ function levelLabel(n) {
         <p class="eyebrow">${esc(item.kind)}${item.scored ? " · scored" : " · unscored"}</p>
         <h3>${esc(item.name)}</h3>
         <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b></p>
-        <p class="meta">${esc(firstName(viewer))}: ${esc(workshopStatusLabel(viewer.workshops[item.id]))}.</p>
+        <p class="meta">${esc(firstName(viewer))}, sequence: ${esc(workshopStatusLabel(viewer.workshops[item.id]).toLowerCase())}.</p>
         <p>${esc(item.detail)}</p>
         ${activityList(item.activities)}
         <p class="meta">Can elicit: ${esc(claims)}</p>
         <p class="meta">In it now: ${esc(now)}. Completed by ${done.length}.</p>
+        <p class="eyebrow">Sittings</p>
+        ${sittingSection("workshop", item.id)}
       </article>`;
     }).join("");
     const intake = A.students.filter((personRecord) => workshopPhase(personRecord) !== "done");
@@ -1370,13 +2065,14 @@ function levelLabel(n) {
     }).join("");
     return `<article class="page" data-page="workshops">
       <header class="page-head">
-        <p class="eyebrow">Intake</p>
-        <h2>Workshops before a seat.</h2>
-        <p class="lede">New students begin in workshops. The sampler is exploratory and carries no score. The diagnostic stations put the first marks on the skill lines, and they show a mentor where the first project needs a scaffold. A workshop is waived when the evidence is already on the record.</p>
+        <p class="eyebrow">Workshops</p>
+        <h2>Workshops you can join.</h2>
+        <p class="lede">Each card is a workshop and the days it meets. Register from a student account to hold a place. When a workshop is scored, the mark comes from the work. New students often move through the sampler, the diagnostic, a medium trial, and the argument workshop. A workshop is waived when the evidence is already on the record.</p>
       </header>
+      ${planNoticeHTML()}
       <div class="grid-2">${cards}</div>
-      <h3 class="section-title">Who is still in the sequence</h3>
-      ${lines ? `<ul>${lines}</ul>` : `<p>Everyone in the cohort has finished the workshop sequence.</p>`}
+      ${state.role === "student" ? "" : `<h3 class="section-title">Who is still in the sequence</h3>
+      ${lines ? `<ul>${lines}</ul>` : `<p>Everyone in the cohort has finished the workshop sequence.</p>`}`}
     </article>`;
   }
 
@@ -1854,7 +2550,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Activities · ${esc(personRecord.name)}</p>
         <h2>What is closed, soon, and still to do.</h2>
-        <p class="lede">Workshops, tests, and project work that can move ${esc(focusName)}, each with the points it can place. A recorded mark is worth 1, 2, 3, or 4 points, matching the stage. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials underneath are worth 0 points.</p>
+        <p class="lede">Workshops, tests, and project work that can move ${esc(focusName)}, each with the points it can place. A recorded mark is worth 1, 2, 3, or 4 points, matching the stage. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials underneath are worth 0 points. <a href="#plan">The plan</a> lists the day and the room, and the lectures. A lecture is worth 0 points.</p>
       </header>
       <div class="filters">
         <label>Field
@@ -2079,73 +2775,183 @@ function levelLabel(n) {
     return { skills, materials, workshops, projects };
   }
 
-  function fieldCards(personRecord) {
-    return A.fields.map((item) => {
-      const bundle = fieldBundle(item.id);
-      const started = bundle.skills.filter((claim) => levelOf(personRecord.id, claim.id) != null).length;
-      return `<a class="card field-card field-${item.id}" href="#fields/${item.id}">
-        <p class="eyebrow">Field</p>
-        <h3>${esc(item.name)}</h3>
-        <p>${esc(item.blurb)}</p>
-        <p class="meta">${started} of ${bundle.skills.length} skills have evidence for ${esc(firstName(personRecord))}.</p>
-        <p class="meta">${bundle.materials.length} materials · ${bundle.workshops.length} workshops · ${bundle.projects.length} projects</p>
-      </a>`;
-    }).join("");
+  function placesOpen(item) {
+    const left = item.capacity - rosterOf(item).length;
+    if (left <= 0) return "Full";
+    if (left === 1) return "1 place open";
+    return `${left} places open`;
   }
 
-  function nextList(personRecord) {
-    const savedField = state.field;
-    const savedSkill = state.skill;
-    state.field = "all";
-    state.skill = "all";
-    let rows = [];
-    try {
-      rows = activityBoard(personRecord);
-    } finally {
-      state.field = savedField;
-      state.skill = savedSkill;
-    }
-    const picked = rows.filter((row) => row.phase === "soon" || (row.phase === "todo" && row.kind === "Workshop")).slice(0, 4);
-    if (!picked.length) return `<p>Nothing is in progress. <a href="#activities">Activities</a> lists what is closed and what is still open.</p>`;
-    return `<ul class="point-mini">${picked.map((row) => `<li>
-      <span><a href="${esc(row.href)}">${esc(row.name)}</a> · ${esc(row.kind)}</span>
-      <b>${esc(row.points)}</b>
-      <small>${esc(row.detail)}</small>
-    </li>`).join("")}</ul>`;
+  function openSittings(kind) {
+    return allSessions().filter((item) => item.kind === kind && sittingOpen(item)).sort(compareSittings);
+  }
+
+  const CLOUD_W = 880;
+  const CLOUD_H = 560;
+  const CLOUD_SPOTS = {
+    MA: [160, 160],
+    MC: [280, 230],
+    MG: [150, 320],
+    MS: [270, 410],
+    ER: [420, 130],
+    EW: [560, 170],
+    EH: [450, 278],
+    PM: [710, 150],
+    PX: [691, 310],
+    PO: [816, 250],
+    PL: [417, 403],
+    PK: [584, 365],
+    PE: [517, 472],
+  };
+
+  function cloudDiameter(level) {
+    if (level == null) return 44;
+    return [0, 56, 68, 80, 92][level];
+  }
+
+  function cloudStrength(level) {
+    if (level == null) return "0%";
+    return ["0%", "42%", "64%", "84%", "100%"][level];
+  }
+
+  function cloudLabel(claim, fieldItem, level) {
+    const stage = level == null ? "no evidence yet" : levelLabel(level);
+    return claim.name + ", " + fieldItem.name + ", " + stage;
+  }
+
+  function syncCloudStudent(personId) {
+    if (cloudStudentId === personId) return;
+    cloudStudentId = personId;
+    cloudZoom = 1;
+    cloudFocus = "";
+  }
+
+  function skillCloud(personRecord) {
+    syncCloudStudent(personRecord.id);
+    const title = state.role === "student" ? "Your skills" : `${firstName(personRecord)}’s skills`;
+    const legend = `<p class="legend">${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}<span class="cloud-empty-key"><i></i>No evidence yet</span></p>`;
+    const tools = `<div class="cloud-tools">
+      <button type="button" data-action="cloud-zoom" data-dir="out"${cloudZoom === 1 ? " disabled" : ""}>Zoom out</button>
+      <button type="button" data-action="cloud-zoom" data-dir="in"${cloudZoom === 2 ? " disabled" : ""}>Zoom in</button>
+    </div>`;
+    const farSkills = A.competencies.map((claim) => {
+      const item = field(claim.field);
+      const level = levelOf(personRecord.id, claim.id);
+      const spot = CLOUD_SPOTS[claim.id];
+      const x = (spot[0] / CLOUD_W * 100).toFixed(2);
+      const y = (spot[1] / CLOUD_H * 100).toFixed(2);
+      return `<button type="button" class="cloud-skill field-${item.id}" data-action="cloud-focus" data-id="${esc(claim.id)}" data-level="${level == null ? 0 : level}" style="--x:${x}%;--y:${y}%;--d:${cloudDiameter(level)};--strength:${cloudStrength(level)}" aria-label="${esc(cloudLabel(claim, item, level))}">
+        <span class="cloud-orb" aria-hidden="true"></span>
+        <span class="cloud-name">${esc(claim.short)}</span>
+      </button>`;
+    }).join("");
+    const halos = A.fields.map((item) => {
+      const group = A.competencies.filter((claim) => claim.field === item.id);
+      const cx = group.reduce((sum, claim) => sum + CLOUD_SPOTS[claim.id][0], 0) / group.length;
+      const cy = group.reduce((sum, claim) => sum + CLOUD_SPOTS[claim.id][1], 0) / group.length;
+      let reach = 0;
+      for (const claim of group) {
+        const level = levelOf(personRecord.id, claim.id);
+        const dist = Math.hypot(CLOUD_SPOTS[claim.id][0] - cx, CLOUD_SPOTS[claim.id][1] - cy) + cloudDiameter(level) / 2;
+        if (dist > reach) reach = dist;
+      }
+      const d = (reach * 2.15 / CLOUD_W * 100).toFixed(2);
+      return `<span class="cloud-halo field-${item.id}" style="--x:${(cx / CLOUD_W * 100).toFixed(2)}%;--y:${(cy / CLOUD_H * 100).toFixed(2)}%;--d:${d}%" aria-hidden="true"></span>`;
+    }).join("");
+    const near = A.fields.map((item) => {
+      const cards = A.competencies.filter((claim) => claim.field === item.id).map((claim) => {
+        const level = levelOf(personRecord.id, claim.id);
+        const open = cloudFocus === claim.id;
+        const detail = open
+          ? `<p>${esc(claim.claim)}</p><p class="meta">${esc(stagePointsSentence(level))}</p><p><a href="#fields/${esc(claim.id)}">Open ${esc(claim.name)}</a></p>`
+          : "";
+        return `<article class="cloud-card${open ? " is-open" : ""}" id="cloud-${esc(claim.id)}">
+          <button type="button" class="cloud-pick field-${item.id}" data-action="cloud-focus" data-id="${esc(claim.id)}" data-level="${level == null ? 0 : level}" aria-pressed="${open}" style="--level:${level == null ? 0 : level};--strength:${cloudStrength(level)}" aria-label="${esc(cloudLabel(claim, item, level))}">
+            <span class="cloud-orb" aria-hidden="true"></span>
+            <span class="cloud-copy"><strong>${esc(claim.name)}</strong><span class="cloud-level">${esc(levelLabel(level))}</span></span>
+          </button>
+          ${detail}
+        </article>`;
+      }).join("");
+      return `<section class="cloud-field field-${item.id}"><h4>${esc(item.name)}</h4><div class="cloud-cards">${cards}</div></section>`;
+    }).join("");
+    const view = cloudZoom === 1
+      ? `<div class="cloud-stage" role="group" aria-label="Skill cloud">${halos}${farSkills}</div>`
+      : `<div class="cloud-near">${near}</div>`;
+    return `<section class="skill-cloud" data-zoom="${cloudZoom}" aria-labelledby="cloud-title">
+      <div class="cloud-head">
+        <h3 class="section-title" id="cloud-title">${esc(title)}</h3>
+        ${tools}
+      </div>
+      <p class="muted">Each color is a field. A deeper color is a further stage. An open ring means there is no evidence yet, and that is not a low score. Zoom in to read the stage and what the skill is asking for.</p>
+      ${view}
+      ${legend}
+    </section>`;
+  }
+
+  function learnCard(item) {
+    const bundle = fieldBundle(item.id);
+    const skills = bundle.skills.map((claim) => claim.short).join(", ");
+    return `<a class="card field-card field-${item.id}" href="#fields/${item.id}">
+      <p class="eyebrow">Field</p>
+      <h3>${esc(item.name)}</h3>
+      <p>${esc(item.blurb)}</p>
+      <p class="meta">${esc(skills)}</p>
+    </a>`;
+  }
+
+  function offerCard(item) {
+    const parent = sessionParent(item);
+    const title = sessionTitle(item);
+    const href = item.kind === "workshop" ? `#workshops/${item.ref}` : `#projects/${item.ref}`;
+    const summary = parent && parent.summary ? parent.summary : sessionBlurb(item);
+    const mine = rosterOf(item).includes(current().id);
+    const yours = mine
+      ? (state.role === "student" ? "You have a place." : `${firstName(current())} has a place.`)
+      : placesOpen(item);
+    return `<article class="offer" id="${esc(item.id)}">
+      <div>
+        <h3><a href="${esc(href)}">${esc(title)}</a></h3>
+        <p>${esc(summary)}</p>
+      </div>
+      <p class="meta">${esc(formatDate(item.date))} · ${esc(item.start)}–${esc(item.end)} · ${esc(item.place)}<br>${esc(yours)}</p>
+      ${registerButtons(item)}
+    </article>`;
   }
 
   function studentDashInner(personRecord) {
-    const points = linePoints(personRecord);
-    const pieces = evidenceFor(personRecord.id).length;
-    const mentor = person(personRecord.mentorId);
+    const workshops = openSittings("workshop").map(offerCard).join("");
+    const projects = openSittings("project").map(offerCard).join("");
+    const recordLabel = state.role === "student" ? "Your record" : `${firstName(personRecord)}’s record`;
+    const planTitle = state.role === "student" ? "Already on your plan" : `On ${firstName(personRecord)}’s plan`;
     return `<header class="page-head">
-        <p class="eyebrow">Student dashboard</p>
-        <h2>${esc(personRecord.name)}</h2>
-        <p class="lede">${esc(situation(personRecord))} ${esc(mediaSentence(personRecord))}</p>
+        <p class="eyebrow">${state.role === "student" ? "Start here" : esc(personRecord.name)}</p>
+        <h2>What would you like to learn?</h2>
+        <p class="lede">Open a field, take a place at a workshop, or look at a project that is meeting. Search finds a skill, a material, a lecture, or a sitting by name.</p>
       </header>
-      <div class="panel-top">
-        ${flagHTML(personRecord)}
-        <p class="meta">Mentor of record: ${esc(mentor.name)}</p>
-      </div>
-      <p>${esc(recommendation(personRecord))}</p>
-      <div class="stat-row">
-        <div class="stat"><b>${points}</b><span>${points === 1 ? "point on the skill lines" : "points on the skill lines"}</span></div>
-        <div class="stat"><b>${pieces}</b><span>${pieces === 1 ? "piece of scored work" : "pieces of scored work"}</span></div>
-      </div>
-      <h3 class="section-title">Fields</h3>
-      <p class="muted">Open a field to see its materials, workshops, and projects, and the points each one can place.</p>
-      <div class="grid-2">${fieldCards(personRecord)}</div>
-      <h3 class="section-title">Next</h3>
-      ${nextList(personRecord)}
-      <div class="doors">
-        <a class="btn primary" href="#fields">Browse fields</a>
-        <a class="btn" href="#library">Materials</a>
-        <a class="btn" href="#workshops">Workshops</a>
-        <a class="btn" href="#projects">Projects</a>
-        <a class="btn" href="#activities">Activities</a>
-        <a class="btn" href="#panel">Record</a>
-        <a class="btn quiet" href="#model">How credit works</a>
-      </div>`;
+      ${planNoticeHTML()}
+      ${skillCloud(personRecord)}
+      <section class="ask" aria-labelledby="learn-title">
+        <h3 class="section-title" id="learn-title">What you can learn</h3>
+        <p class="muted">Four fields. Open one for the skills, the materials to practice, and the work that can place a mark.</p>
+        <div class="learn-grid">${A.fields.map(learnCard).join("")}</div>
+      </section>
+      <section class="ask" aria-labelledby="workshops-title">
+        <h3 class="section-title" id="workshops-title">Workshops with a place</h3>
+        <p class="muted">Registering holds your place at that sitting. When a workshop is scored, the mark comes from the work. <a href="#workshops">All workshops</a></p>
+        <div class="offer-list">${workshops || `<p class="empty">No workshop is meeting after ${esc(formatDate(A.today))}.</p>`}</div>
+      </section>
+      <section class="ask" aria-labelledby="projects-title">
+        <h3 class="section-title" id="projects-title">Projects you can take up</h3>
+        <p class="muted">Registering holds a place at the sitting. The seat on the project stays as it is, and the score comes from the work products. <a href="#projects">All projects</a></p>
+        <div class="offer-list">${projects || `<p class="empty">No project is meeting after ${esc(formatDate(A.today))}.</p>`}</div>
+      </section>
+      <section class="ask" aria-labelledby="plan-title">
+        <h3 class="section-title" id="plan-title">${esc(planTitle)}</h3>
+        ${planGlance(personRecord)}
+        <p><a href="#plan">See every sitting, including lectures</a>. A lecture is worth 0 points.</p>
+        <p class="muted"><a href="#panel">${esc(recordLabel)}</a> has the marks. <a href="#model">How credit works</a>.</p>
+      </section>`;
   }
 
   function menteeCard(personRecord) {
@@ -2158,6 +2964,7 @@ function levelLabel(n) {
       <h3>${esc(personRecord.name)}</h3>
       <p>${esc(situation(personRecord))}</p>
       <p class="meta">${esc(pointsText + lastText)}</p>
+      <p class="meta">${esc(nextSittingLine(personRecord))}</p>
       <p>${esc(recommendation(personRecord))}</p>
       <p><a href="#panel" data-action="open-student" data-id="${personRecord.id}">Open the record</a></p>
     </article>`;
@@ -2171,7 +2978,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Mentor dashboard · ${esc(mentor.domain)}</p>
         <h2>${esc(mentor.name)}</h2>
-        <p class="lede">${mentees.length === 1 ? "1 student." : `${mentees.length} students.`} The tabs are the same ones a student uses: fields, materials, workshops, projects, activities, and the record.</p>
+        <p class="lede">${mentees.length === 1 ? "1 student." : `${mentees.length} students.`} Search finds a workshop, a project, or something a student can learn. The questions along the top are the same ones a student starts from.</p>
       </header>
       <div class="grid-2">${cards || `<p class="empty">No students on this dashboard.</p>`}</div>
     </section>`;
@@ -2190,7 +2997,7 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Director · ${esc(person("ortega").name)}</p>
         <h2>The student dashboard and the mentor dashboards.</h2>
-        <p class="lede">This unit opens two dashboards. One belongs to the student. One belongs to the mentor. ${esc(person("ortega").name)} reads both. The tabs along the top are the same from either one.</p>
+        <p class="lede">This unit opens two dashboards. One belongs to the student. One belongs to the mentor. ${esc(person("ortega").name)} reads both. The student’s page starts from what they can learn, which workshops have a place, and which projects are meeting.</p>
       </header>
       ${studentDashInner(current())}
       <h3 class="section-title">Mentor dashboards</h3>
@@ -2201,6 +3008,7 @@ function levelLabel(n) {
 
   function activeFieldId() {
     if (field(state.param)) return state.param;
+    if (state.route === "fields" && competency(state.param)) return competency(state.param).field;
     if (state.field !== "all" && field(state.field)) return state.field;
     const claim = competency(state.competencyId);
     return claim ? claim.field : A.fields[0].id;
@@ -2214,7 +3022,7 @@ function levelLabel(n) {
     const tabs = A.fields.map((row) => `<a class="field-${row.id}" href="#fields/${row.id}"${row.id === fieldId ? ' aria-current="page"' : ""}>${esc(row.name)}</a>`).join("");
     const skills = bundle.skills.map((claim) => {
       const level = levelOf(personRecord.id, claim.id);
-      return `<article class="card field-${item.id}">
+      return `<article class="card field-${item.id}" id="skill-${claim.id}">
         <h3><button type="button" class="text-btn" data-action="select-competency" data-id="${claim.id}">${esc(claim.name)}</button></h3>
         <p class="level-line">${meter(level, item.id)} <span>${esc(levelLabel(level))}</span></p>
         <p class="meta">${esc(stagePointsSentence(level))}</p>
@@ -2233,6 +3041,13 @@ function levelLabel(n) {
       <span><a href="#projects/${row.id}">${esc(row.name)}</a></span>
       <b>${esc(offerPhrase(row.elicits))}</b>
     </li>`).join("");
+    const lectures = allSessions()
+      .filter((row) => row.kind === "lecture" && row.field === item.id)
+      .sort(compareSittings)
+      .map((row) => `<li>
+        <span><a href="#plan">${esc(row.title)}</a> · ${esc(formatDate(row.date))}${sittingOpen(row) ? "" : " · held"}</span>
+        <b>0 points</b>
+      </li>`).join("");
     return `<article class="page" data-page="fields" data-field="${item.id}" data-student="${personRecord.id}">
       <header class="page-head">
         <p class="eyebrow">Fields · ${esc(personRecord.name)}</p>
@@ -2250,6 +3065,9 @@ function levelLabel(n) {
       ${workshops ? `<ul class="point-mini">${workshops}</ul>` : `<p class="muted">No workshop elicits a skill in this field.</p>`}
       <h3 class="section-title">Projects</h3>
       ${projects ? `<ul class="point-mini">${projects}</ul>` : `<p class="muted">No project elicits a skill in this field.</p>`}
+      <h3 class="section-title">Lectures</h3>
+      ${lectures ? `<ul class="point-mini">${lectures}</ul>` : `<p class="muted">No lecture in this field is on the plan.</p>`}
+      <p><a href="#plan">Open the plan</a> to register. A lecture is worth 0 points.</p>
     </article>`;
   }
 
@@ -2261,23 +3079,27 @@ function levelLabel(n) {
     if (state.route === "map") return renderMap();
     if (state.route === "projects") return renderProjects();
     if (state.route === "workshops") return renderWorkshops();
+    if (state.route === "plan") return renderPlan();
     if (state.route === "activities") return renderActivities();
     if (state.route === "library") return renderLibrary();
     if (state.route === "cohort") return renderCohort();
     if (state.route === "report") return renderReport();
+    if (state.route === "search") return renderSearch();
     return renderDashboard();
   }
 
   function pageTitle() {
     const fieldName = field(activeFieldId());
     const titles = {
-      dashboard: state.role === "mentor" ? "Mentor dashboard" : state.role === "director" ? "Dashboards" : "Student dashboard",
+      dashboard: state.role === "mentor" ? "Mentor" : state.role === "director" ? "Dashboards" : "Home",
+      search: state.param.trim() ? `Search: ${state.param.trim().slice(0, 40)}` : "Search",
       fields: fieldName ? fieldName.name : "Fields",
       model: "The model",
       panel: current().name,
       map: "Competency map",
       projects: state.param && project(state.param) ? project(state.param).name : "Projects",
       workshops: "Workshops",
+      plan: "Plan",
       activities: "Activities",
       library: "Materials",
       cohort: "Cohort",
@@ -2286,16 +3108,267 @@ function levelLabel(n) {
     return titles[state.route] || "Continuum";
   }
 
-  function navItems() {
-    return [
-      ["dashboard", "Dashboard"],
-      ["fields", "Fields"],
-      ["library", "Materials"],
-      ["workshops", "Workshops"],
-      ["projects", "Projects"],
-      ["activities", "Activities"],
-      ["panel", "Record"],
+  function primaryMark() {
+    if (state.route === "report" || state.route === "panel") return "record";
+    if (state.route === "plan") return "plan";
+    if (state.route === "workshops") return "workshops";
+    if (state.route === "projects") return "projects";
+    if (["fields", "library", "activities", "map"].includes(state.route)) return "learn";
+    return "";
+  }
+
+  function navLink(href, label, on) {
+    return `<a href="${href}"${on ? ' aria-current="page"' : ""}>${label}</a>`;
+  }
+
+  function normSearch(value) {
+    return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9'+]+/g, " ").trim();
+  }
+
+  function clipText(value) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (text.length <= 140) return text;
+    return text.slice(0, 137).trim() + "…";
+  }
+
+  function sittingWords(kind, ref) {
+    return sittingsOf(kind, ref).map((item) => {
+      const host = person(item.hostId);
+      return [item.date, formatDate(item.date), item.place, item.start, item.end, host ? host.name : ""].join(" ");
+    }).join(" ");
+  }
+
+  function searchCatalog() {
+    const rows = [];
+    for (const item of A.fields) {
+      rows.push({
+        kind: "Field",
+        title: item.name,
+        detail: clipText(item.blurb),
+        href: "#fields/" + item.id,
+        text: [item.name, item.blurb, "field", "learn"].join(" "),
+      });
+    }
+    for (const item of A.competencies) {
+      const area = field(item.field);
+      rows.push({
+        kind: "Skill",
+        title: item.name,
+        detail: clipText(`${area.name}. ${item.claim}`),
+        href: "#fields/" + item.id,
+        text: [item.name, item.short, item.claim, area.name, "skill", "learn"].join(" "),
+      });
+    }
+    for (const item of A.workshops) {
+      const activities = (item.activities || []).map((row) => row.name).join(" ");
+      rows.push({
+        kind: "Workshop",
+        title: item.name,
+        detail: clipText(item.summary),
+        href: "#workshops/" + item.id,
+        text: ["workshop", item.name, item.summary, item.detail, item.kind, activities, sittingWords("workshop", item.id)].join(" "),
+      });
+    }
+    for (const item of A.projects) {
+      const activities = (item.activities || []).map((row) => row.name).join(" ");
+      rows.push({
+        kind: "Project",
+        title: item.name,
+        detail: clipText(item.summary),
+        href: "#projects/" + item.id,
+        text: ["project", item.name, item.summary, item.brief, item.place, activities, sittingWords("project", item.id)].join(" "),
+      });
+    }
+    for (const item of allSessions()) {
+      if (item.kind !== "lecture") continue;
+      const area = field(item.field);
+      rows.push({
+        kind: "Lecture",
+        title: item.title,
+        detail: clipText(`${formatDate(item.date)}${sittingOpen(item) ? "" : ", already held"}. ${item.summary || ""}`),
+        href: "#plan/" + item.id,
+        text: ["lecture", item.title, item.summary, area ? area.name : "", formatDate(item.date), item.place].join(" "),
+      });
+    }
+    for (const item of allMaterials()) {
+      const areas = materialFields(item).map((id) => field(id).name).join(" ");
+      rows.push({
+        kind: "Material",
+        title: item.title,
+        detail: clipText(item.summary),
+        href: "#library/" + item.id,
+        text: ["material", item.title, item.summary, areas, mediaLabel(item.medium)].join(" "),
+      });
+    }
+    return rows;
+  }
+
+  function searchHits(query) {
+    const words = normSearch(query).split(" ").filter(Boolean);
+    if (words.length < 1) return [];
+    const kindOrder = { Workshop: 0, Project: 1, Field: 2, Skill: 3, Lecture: 4, Material: 5 };
+    const scored = [];
+    for (const item of searchCatalog()) {
+      const title = normSearch(item.title);
+      const text = normSearch(item.text);
+      if (!words.every((word) => text.includes(word))) continue;
+      const joined = words.join(" ");
+      let rank = 3;
+      if (title.startsWith(joined)) rank = 0;
+      else if (title.includes(joined)) rank = 1;
+      else if (words.every((word) => title.includes(word))) rank = 2;
+      scored.push({ item, rank });
+    }
+    scored.sort((a, b) => a.rank - b.rank || kindOrder[a.item.kind] - kindOrder[b.item.kind] || a.item.title.localeCompare(b.item.title));
+    return scored.map((row) => row.item);
+  }
+
+  function searchGroups(hits) {
+    const groups = [
+      ["Workshop", "Workshops"],
+      ["Project", "Projects"],
+      ["Field", "Fields"],
+      ["Skill", "Skills"],
+      ["Lecture", "Lectures"],
+      ["Material", "Materials"],
     ];
+    return groups.map(([kind, label]) => ({
+      label,
+      rows: hits.filter((item) => item.kind === kind),
+    })).filter((group) => group.rows.length);
+  }
+
+  function renderSearch() {
+    const query = state.param.trim();
+    const ready = normSearch(query).split(" ").filter(Boolean).length >= 1 && query.trim().length >= 2;
+    const hits = ready ? searchHits(query) : [];
+    const body = !query
+      ? `<p>Type a workshop, a project, a skill, or a material.</p>`
+      : !ready
+        ? `<p>Type at least two letters.</p>`
+        : !hits.length
+          ? `<p class="empty">Nothing matches “${esc(query)}”.</p>`
+          : searchGroups(hits).map((group) => `<section>
+              <h3 class="section-title">${esc(group.label)}</h3>
+              <ul class="search-hits">${group.rows.map((item) => `<li><a href="${esc(item.href)}"><strong>${esc(item.title)}</strong><span>${esc(item.detail)}</span></a></li>`).join("")}</ul>
+            </section>`).join("");
+    return `<article class="page" data-page="search">
+      <header class="page-head">
+        <p class="eyebrow">Search</p>
+        <h2>${query ? `Matches for “${esc(query)}”` : "Search the atelier."}</h2>
+        <p class="lede">Results open the workshop, the project, the field, the material, or the sitting.</p>
+      </header>
+      ${body}
+    </article>`;
+  }
+
+  function hideSearchList() {
+    searchActive = -1;
+    const input = document.getElementById("find-q");
+    const list = document.getElementById("find-list");
+    if (input) {
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+    }
+    if (list) {
+      list.hidden = true;
+      list.innerHTML = "";
+    }
+  }
+
+  function closeSearch() {
+    const input = document.getElementById("find-q");
+    if (input) input.value = "";
+    hideSearchList();
+  }
+
+  function paintSearchList() {
+    const input = document.getElementById("find-q");
+    const list = document.getElementById("find-list");
+    if (!input || !list) return;
+    const query = input.value.trim();
+    if (query.length < 2) {
+      hideSearchList();
+      return;
+    }
+    const hits = searchHits(query);
+    if (!hits.length) {
+      searchActive = -1;
+      list.hidden = false;
+      list.innerHTML = `<p class="find-empty">Nothing matches.</p>`;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+      return;
+    }
+    const shown = hits.slice(0, 8);
+    const extra = hits.length > shown.length;
+    const count = shown.length + (extra ? 1 : 0);
+    if (searchActive >= count) searchActive = count - 1;
+    const options = shown.map((item, index) => {
+      const selected = index === searchActive;
+      return `<a role="option" id="find-opt-${index}" href="${esc(item.href)}" aria-selected="${selected ? "true" : "false"}"><span class="find-kind">${esc(item.kind)}</span><strong>${esc(item.title)}</strong><span class="find-detail">${esc(item.detail)}</span></a>`;
+    });
+    if (extra) {
+      const index = shown.length;
+      const selected = index === searchActive;
+      options.push(`<a role="option" id="find-opt-${index}" href="#search/${esc(encodeURIComponent(query))}" aria-selected="${selected ? "true" : "false"}"><span class="find-kind">Search</span><strong>See all ${hits.length} matches</strong></a>`);
+    }
+    list.hidden = false;
+    list.innerHTML = options.join("");
+    input.setAttribute("aria-expanded", "true");
+    if (searchActive >= 0) {
+      input.setAttribute("aria-activedescendant", "find-opt-" + searchActive);
+      const node = document.getElementById("find-opt-" + searchActive);
+      if (node) node.scrollIntoView({ block: "nearest" });
+    } else input.removeAttribute("aria-activedescendant");
+  }
+
+  function onSearchKey(event) {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.id !== "find-q") return;
+    if (event.key === "Escape") {
+      hideSearchList();
+      return;
+    }
+    const query = input.value.trim();
+    const total = query.length < 2 ? 0 : (() => {
+      const n = searchHits(query).length;
+      if (!n) return 0;
+      return Math.min(8, n) + (n > 8 ? 1 : 0);
+    })();
+    if (event.key === "ArrowDown" && total) {
+      event.preventDefault();
+      searchActive = Math.min(total - 1, searchActive + 1);
+      paintSearchList();
+      return;
+    }
+    if (event.key === "ArrowUp" && total) {
+      event.preventDefault();
+      searchActive = Math.max(-1, searchActive - 1);
+      paintSearchList();
+      return;
+    }
+    if (event.key === "Enter" && searchActive >= 0) {
+      const node = document.getElementById("find-opt-" + searchActive);
+      if (node) {
+        event.preventDefault();
+        node.click();
+      }
+    }
+  }
+
+  function bindSearch() {
+    const form = document.getElementById("find");
+    const input = document.getElementById("find-q");
+    const list = document.getElementById("find-list");
+    if (!form || !input || !list || form.dataset.bound === "true") return;
+    form.dataset.bound = "true";
+    input.addEventListener("input", () => {
+      searchActive = -1;
+      paintSearchList();
+    });
+    input.addEventListener("keydown", onSearchKey);
+    list.addEventListener("mousedown", (event) => event.preventDefault());
   }
 
   function whoHTML() {
@@ -2304,7 +3377,7 @@ function levelLabel(n) {
       ["mentor", "Mentor"],
       ["director", "Director"],
     ];
-    const seg = `<div class="seg" role="group" aria-label="Role">${roles.map(([id, label]) =>
+    const seg = `<div class="seg" role="group" aria-label="Account">${roles.map(([id, label]) =>
       `<button type="button" data-action="set-role" data-role="${id}" aria-pressed="${state.role === id}">${label}</button>`
     ).join("")}</div>`;
     let extra = "";
@@ -2326,13 +3399,20 @@ function levelLabel(n) {
   }
 
   function renderChrome() {
+    const mark = primaryMark();
     const nav = document.getElementById("nav");
     if (nav) {
-      const currentRoute = state.route === "map" ? "fields" : state.route;
-      nav.innerHTML = navItems().map(([route, label]) => {
-        const on = currentRoute === route;
-        return `<a href="#${route}" data-route="${route}"${on ? ' aria-current="page"' : ""}>${label}</a>`;
-      }).join("");
+      const primary = [
+        ["#fields", "What you can learn", mark === "learn"],
+        ["#workshops", "Workshops", mark === "workshops"],
+        ["#projects", "Projects", mark === "projects"],
+      ];
+      let side = "";
+      if (state.role !== "student") side += navLink("#plan", "Plan a sitting", mark === "plan");
+      const recordLabel = state.role === "student" ? "Your record" : "Record";
+      side += navLink("#panel", recordLabel, mark === "record");
+      nav.innerHTML = primary.map(([href, label, on]) => navLink(href, label, on)).join("")
+        + `<span class="nav-side">${side}</span>`;
     }
     const who = document.getElementById("who");
     if (who) who.innerHTML = whoHTML();
@@ -2361,8 +3441,10 @@ function levelLabel(n) {
     renderChrome();
     const root = document.getElementById("app");
     root.innerHTML = healthHTML(health()) + page();
-    if (options.scroll === "top") window.scrollTo(0, 0);
-    else window.scrollTo(0, y);
+    if (options.scroll === "top") {
+      window.scrollTo(0, 0);
+      jumpToRoute();
+    } else window.scrollTo(0, y);
     if (restore && options.scroll !== "top") {
       const bits = [`[data-action="${restore.action}"]`, `[data-id="${CSS.escape(restore.id)}"]`];
       if (restore.type) bits.push(`[data-type="${CSS.escape(restore.type)}"]`);
@@ -2370,6 +3452,19 @@ function levelLabel(n) {
       const next = document.querySelector(bits.join(""));
       if (next && next !== document.activeElement) next.focus({ preventScroll: true });
     }
+  }
+
+  function jumpToRoute() {
+    let id = "";
+    if (state.route === "workshops" && workshop(state.param)) id = "workshop-" + state.param;
+    else if (state.route === "library" && materialById(state.param)) id = state.param;
+    else if (state.route === "plan" && sessionById(state.param)) id = state.param;
+    else if (state.route === "fields" && competency(state.param)) id = "skill-" + state.param;
+    if (!id) return;
+    const node = document.getElementById(id)
+      || document.getElementById("upcoming-" + id)
+      || document.getElementById("held-" + id);
+    if (node) node.scrollIntoView({ block: "start" });
   }
 
   function go(route) {
@@ -2382,14 +3477,40 @@ function levelLabel(n) {
     if (!student(id)) return;
     state.studentId = id;
     state.competencyId = defaultCompetency(student(id));
+    planNotice = "";
     persist();
     render();
   }
 
   function onClick(event) {
+    const find = document.getElementById("find");
+    if (find && !find.contains(event.target)) hideSearchList();
     const node = event.target.closest("[data-action]");
     if (!node) return;
     const action = node.dataset.action;
+    if (action === "cloud-zoom") {
+      if (node.dataset.dir === "in") {
+        cloudZoom = 2;
+        if (!competency(cloudFocus)) cloudFocus = state.competencyId;
+      } else {
+        cloudZoom = 1;
+        cloudFocus = "";
+      }
+      render();
+      return;
+    }
+    if (action === "cloud-focus") {
+      const claim = competency(node.dataset.id);
+      if (!claim) return;
+      cloudFocus = claim.id;
+      cloudZoom = 2;
+      state.competencyId = claim.id;
+      persist();
+      render();
+      const card = document.getElementById("cloud-" + claim.id);
+      if (card) card.scrollIntoView({ block: "nearest" });
+      return;
+    }
     if (action === "select-competency") {
       state.competencyId = node.dataset.id;
       persist();
@@ -2506,8 +3627,16 @@ function levelLabel(n) {
       if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
       return;
     }
+    if (action === "register") {
+      explainRegistration(node.dataset.id, "register");
+      return;
+    }
+    if (action === "withdraw") {
+      explainRegistration(node.dataset.id, "withdraw");
+      return;
+    }
     if (action === "reset") {
-      const ok = window.confirm("Clear challenges, mentor notes, reports, and materials saved in this browser? The sample shelf stays.");
+      const ok = window.confirm("Clear challenges, mentor notes, reports, materials, and registrations saved in this browser? The sample shelf and the sample plan stay.");
       if (!ok) return;
       try { localStorage.removeItem(KEY); } catch (err) { /* ignore */ }
       const route = state.route;
@@ -2516,6 +3645,7 @@ function levelLabel(n) {
       state.route = route;
       state.param = param;
       libraryNotice = "";
+      planNotice = "";
       render();
     }
   }
@@ -2526,6 +3656,17 @@ function levelLabel(n) {
     if (target.name === "external") {
       const box = document.getElementById("external-fields");
       if (box) box.hidden = !target.checked;
+      return;
+    }
+    if (target.name === "sittingKind" && target.form) {
+      syncPlanForm(target.form);
+      return;
+    }
+    if (target.name === "planKind") {
+      if (!["all", "workshop", "project", "lecture"].includes(target.value)) return;
+      state.planKind = target.value;
+      persist();
+      render();
       return;
     }
     if (target.name === "studentId") setStudent(target.value);
@@ -2554,6 +3695,21 @@ function levelLabel(n) {
     if (!(form instanceof HTMLFormElement) || !form.dataset.form) return;
     event.preventDefault();
     const data = new FormData(form);
+    if (form.dataset.form === "find") {
+      const query = String(data.get("q") || "").trim().slice(0, 80);
+      const input = document.getElementById("find-q");
+      if (!query) {
+        if (input) input.focus();
+        return;
+      }
+      const next = "#search/" + encodeURIComponent(query);
+      if (location.hash === next) {
+        closeSearch();
+        if (input) input.value = query;
+        render({ scroll: "top" });
+      } else location.hash = next;
+      return;
+    }
     const personRecord = current();
     if (form.dataset.form === "challenge") {
       if (state.role !== "student") return;
@@ -2665,6 +3821,69 @@ function levelLabel(n) {
       if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (form.dataset.form === "plan") {
+      if (state.role === "student") return;
+      const kind = String(data.get("sittingKind") || "");
+      const error = form.querySelector("[data-error]");
+      const fail = (message) => { if (error) error.textContent = message; };
+      const date = String(data.get("date") || "");
+      const start = normalizeTime(data.get("start"));
+      const end = normalizeTime(data.get("end"));
+      const place = String(data.get("place") || "").trim().slice(0, 80);
+      const note = String(data.get("note") || "").trim().slice(0, 240);
+      const capacityText = String(data.get("capacity") || "");
+      if (!["workshop", "project", "lecture"].includes(kind)) return fail("Choose what kind of sitting this is.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < A.today) return fail(`Choose a day on or after ${formatDate(A.today)}.`);
+      if (!start || !end || timeValue(end) <= timeValue(start)) return fail("The end needs to be after the start.");
+      if (!place) return fail("Name the room.");
+      if (!/^\d+$/.test(capacityText)) return fail("Capacity should be a whole number from 1 to 40.");
+      const capacity = Number(capacityText);
+      if (capacity < 1 || capacity > 40) return fail("Capacity should be a whole number from 1 to 40.");
+      const hostId = state.role === "mentor" ? state.mentorId : String(data.get("hostId") || "");
+      if (!person(hostId)) return fail("Choose a host.");
+      let ref = "";
+      let title = "";
+      let summary = "";
+      let fieldId = "";
+      if (kind === "workshop") {
+        ref = String(data.get("workshopId") || "");
+        if (!workshop(ref)) return fail("Choose a workshop.");
+      } else if (kind === "project") {
+        ref = String(data.get("projectId") || "");
+        if (!project(ref)) return fail("Choose a project.");
+      } else {
+        title = String(data.get("title") || "").trim().slice(0, 140);
+        summary = String(data.get("summary") || "").trim().slice(0, 400);
+        fieldId = String(data.get("lectureField") || "");
+        if (!title || !summary) return fail("Give the lecture a title and a summary.");
+        if (!field(fieldId)) return fail("Choose the field the lecture serves.");
+      }
+      const clash = allSessions().find((item) => item.date === date && item.hostId === hostId && start < item.end && item.start < end);
+      if (clash) return fail(`${person(hostId).name} already has a sitting then (${sessionTitle(clash)}, ${clash.start}–${clash.end}).`);
+      sittingSerial += 1;
+      const item = {
+        id: "sit-local-" + Date.now() + "-" + sittingSerial,
+        kind,
+        ref,
+        title,
+        summary,
+        field: fieldId,
+        date,
+        start,
+        end,
+        place,
+        hostId,
+        capacity,
+        note,
+      };
+      state.planned.push(item);
+      if (state.planKind !== "all" && state.planKind !== kind) state.planKind = kind;
+      planNotice = `${sessionTitle(item)} is on the plan for ${formatDate(date)}.`;
+      persist();
+      render();
+      focusSitting(item.id);
+      return;
+    }
     if (form.dataset.form === "report") {
       if (!canDecide(personRecord)) return;
       const text = String(data.get("body") || "").trim();
@@ -2702,18 +3921,20 @@ function levelLabel(n) {
       return;
     }
     load();
+    bindSearch();
     if (!location.hash) history.replaceState(null, "", "#dashboard");
-    const route = readRoute();
-    state.route = route.route;
-    state.param = route.param;
-    rememberField(route);
+    applyRoute(readRoute());
     render({ scroll: "top" });
     window.addEventListener("hashchange", () => {
       const next = readRoute();
-      state.route = next.route;
-      state.param = next.param;
-      rememberField(next);
+      applyRoute(next);
       libraryNotice = "";
+      planNotice = "";
+      closeSearch();
+      if (next.route === "search") {
+        const input = document.getElementById("find-q");
+        if (input) input.value = next.param;
+      }
       render({ scroll: "top" });
     });
     document.body.addEventListener("click", onClick);
