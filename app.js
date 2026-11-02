@@ -47,6 +47,7 @@
   let cloudZoom = 1;
   let cloudFocus = "";
   let cloudStudentId = "";
+  let offerCloudFocus = { parentId: "", skillId: "" };
 
   const byId = (list, id) => list.find((item) => item.id === id);
   const competency = (id) => byId(A.competencies, id);
@@ -309,6 +310,12 @@ function levelLabel(n) {
 
   function offerPoints(ids) {
     return ids.length * 4;
+  }
+
+  function pointsStillOpen(personId, competencyId) {
+    const level = levelOf(personId, competencyId);
+    if (level == null) return 4;
+    return Math.max(0, 4 - level);
   }
 
   function offerPhrase(ids) {
@@ -1558,6 +1565,7 @@ function levelLabel(n) {
       <p class="meta">${esc(item.place)}</p>
       <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b> <span>across ${item.elicits.length} skills</span></p>
       ${overlapNote(item) ? `<p class="meta">${esc(overlapNote(item))}</p>` : ""}
+      ${offerSkillCloud(item, current(), "project")}
       <h3 class="section-title">Points for each part</h3>
       ${activityList(item.activities)}
       <p><strong>On it.</strong> ${on}</p>
@@ -1815,24 +1823,54 @@ function levelLabel(n) {
     return `<ul class="point-mini">${rows.map(sittingCompact).join("")}</ul>`;
   }
 
+  function agendaPoints(item) {
+    if (item.kind === "lecture") return "0 points";
+    const parent = sessionParent(item);
+    if (!parent || !Array.isArray(parent.elicits)) return "0 points";
+    return offerPhrase(parent.elicits);
+  }
+
   function planGlance(personRecord) {
     const rows = allSessions()
       .filter((item) => sittingOpen(item) && rosterOf(item).includes(personRecord.id))
       .sort(compareSittings);
     if (!rows.length) {
-      const name = firstName(personRecord);
-      return state.role === "student"
-        ? `<p>No place at a coming sitting yet. Register from a workshop or a project above.</p>`
-        : `<p>${esc(name)} has no place at a coming sitting.</p>`;
+      const sentence = state.role === "student"
+        ? "No place at a coming sitting yet. Register from a workshop or a project above."
+        : `${firstName(personRecord)} has no place at a coming sitting.`;
+      return `<p class="empty">${esc(sentence)}</p>`;
     }
-    return `<ul class="point-mini">${rows.map((row) => {
-      const host = person(row.hostId);
-      return `<li>
-        <span><a href="#plan">${esc(sessionTitle(row))}</a> · ${esc(kindLabel(row.kind))}</span>
-        <b>${esc(formatDate(row.date))}</b>
-        <small>${esc(row.start)}–${esc(row.end)} · ${esc(row.place)}${host ? ` · ${esc(host.name)}` : ""}</small>
+    const days = [];
+    for (const row of rows) {
+      const last = days[days.length - 1];
+      if (last && last.date === row.date) last.rows.push(row);
+      else days.push({ date: row.date, rows: [row] });
+    }
+    const daysHTML = days.map((day) => {
+      const slots = day.rows.map((row) => {
+        const host = person(row.hostId);
+        const named = row.kind === "lecture" ? field(row.field) : null;
+        const tone = named ? ` field-${named.id}` : "";
+        const kind = named ? `${kindLabel(row.kind)} · ${named.name}` : kindLabel(row.kind);
+        const where = host ? `${row.place} · ${host.name}` : row.place;
+        return `<li class="agenda-slot${tone}">
+          <p class="agenda-time"><b>${esc(row.start)}</b><span>to ${esc(row.end)}</span></p>
+          <div class="agenda-body">
+            <p class="eyebrow">${esc(kind)}</p>
+            <h4><a href="${esc(sessionHref(row))}">${esc(sessionTitle(row))}</a></h4>
+            <p class="meta">${esc(where)}</p>
+            <p class="agenda-points">${esc(agendaPoints(row))}</p>
+          </div>
+        </li>`;
+      }).join("");
+      const today = day.date === A.today ? " is-today" : "";
+      return `<li class="agenda-day${today}">
+        <p class="vh">${esc(weekdayName(day.date))} ${esc(formatDate(day.date))}</p>
+        ${whenBlock(day.rows[0])}
+        <ol class="agenda-slots">${slots}</ol>
       </li>`;
-    }).join("")}</ul>`;
+    }).join("");
+    return `<ol class="agenda">${daysHTML}</ol>`;
   }
 
   function nextSittingLine(personRecord) {
@@ -2045,6 +2083,7 @@ function levelLabel(n) {
         <p class="eyebrow">${esc(item.kind)}${item.scored ? " · scored" : " · unscored"}</p>
         <h3>${esc(item.name)}</h3>
         <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b></p>
+        ${offerSkillCloud(item, viewer, "workshop")}
         <p class="meta">${esc(firstName(viewer))}, sequence: ${esc(workshopStatusLabel(viewer.workshops[item.id]).toLowerCase())}.</p>
         <p>${esc(item.detail)}</p>
         ${activityList(item.activities)}
@@ -2889,6 +2928,84 @@ function levelLabel(n) {
     </section>`;
   }
 
+  function offerDiameter(points) {
+    return [34, 50, 66, 80, 92][points];
+  }
+
+  function offerStrength(points) {
+    if (points <= 0) return "0%";
+    return ["0%", "48%", "66%", "84%", "100%"][points];
+  }
+
+  function stillOpenSentence(personRecord, claim, noun) {
+    const level = levelOf(personRecord.id, claim.id);
+    const points = pointsStillOpen(personRecord.id, claim.id);
+    const line = state.role === "student" ? "your line" : `${firstName(personRecord)}’s line`;
+    if (points === 0) {
+      return `${claim.name} is already advanced, 4 points on ${line}. The work can still be scored, and the line does not rise.`;
+    }
+    if (level == null) {
+      return `${claim.name} has no evidence yet. That is not a low score. This ${noun} can place up to 4 points on ${line}.`;
+    }
+    const rise = points === 1 ? "1 point" : `${points} points`;
+    return `${claim.name} is ${levelLabel(level).toLowerCase()}, ${pointsLabel(level)} on ${line}. This ${noun} can raise it by up to ${rise}.`;
+  }
+
+  function offerSkillCloud(workItem, personRecord, noun) {
+    const ids = workItem.elicits.filter((id) => competency(id));
+    if (!ids.length) return "";
+    const total = ids.reduce((sum, id) => sum + pointsStillOpen(personRecord.id, id), 0);
+    const who = state.role === "student" ? "your lines" : `${firstName(personRecord)}’s lines`;
+    const ceiling = total === 0
+      ? `Nothing further can rise on ${who}. Each of these lines is already advanced.`
+      : total === 1
+        ? `Up to 1 point can still rise on ${who}.`
+        : `Up to ${total} points can still rise on ${who}.`;
+    const focusId = offerCloudFocus.parentId === workItem.id && ids.includes(offerCloudFocus.skillId)
+      ? offerCloudFocus.skillId
+      : "";
+    const focusClaim = focusId ? competency(focusId) : null;
+    const shown = new Set(ids);
+    const skills = ids.map((id) => {
+      const claim = competency(id);
+      const item = field(claim.field);
+      const points = pointsStillOpen(personRecord.id, id);
+      const spot = CLOUD_SPOTS[id];
+      const x = (spot[0] / CLOUD_W * 100).toFixed(2);
+      const y = (spot[1] / CLOUD_H * 100).toFixed(2);
+      const classes = ["cloud-skill", "field-" + item.id, points === 0 ? "is-spent" : "", points >= 3 ? "is-strong" : ""].filter(Boolean).join(" ");
+      const room = points === 0 ? "no points left on the line" : points === 1 ? "up to 1 point still available" : `up to ${points} points still available`;
+      return `<button type="button" class="${classes}" data-action="offer-cloud" data-parent="${esc(workItem.id)}" data-id="${esc(id)}" data-points="${points}" aria-pressed="${id === focusId}" style="--x:${x}%;--y:${y}%;--d:${offerDiameter(points)};--strength:${offerStrength(points)}" aria-label="${esc(claim.name + ", " + item.name + ", " + room)}">
+        <span class="cloud-orb" aria-hidden="true"><span class="cloud-points">${points}</span></span>
+        <span class="cloud-name">${esc(claim.short)}</span>
+      </button>`;
+    }).join("");
+    const halos = A.fields.map((item) => {
+      const group = A.competencies.filter((claim) => claim.field === item.id && shown.has(claim.id));
+      if (!group.length) return "";
+      const cx = group.reduce((sum, claim) => sum + CLOUD_SPOTS[claim.id][0], 0) / group.length;
+      const cy = group.reduce((sum, claim) => sum + CLOUD_SPOTS[claim.id][1], 0) / group.length;
+      let reach = 0;
+      for (const claim of group) {
+        const dist = Math.hypot(CLOUD_SPOTS[claim.id][0] - cx, CLOUD_SPOTS[claim.id][1] - cy) + offerDiameter(pointsStillOpen(personRecord.id, claim.id)) / 2;
+        if (dist > reach) reach = dist;
+      }
+      const d = (reach * 2.15 / CLOUD_W * 100).toFixed(2);
+      return `<span class="cloud-halo field-${item.id}" style="--x:${(cx / CLOUD_W * 100).toFixed(2)}%;--y:${(cy / CLOUD_H * 100).toFixed(2)}%;--d:${d}%" aria-hidden="true"></span>`;
+    }).join("");
+    const reading = focusClaim
+      ? `<div class="cloud-read" id="offer-cloud-read-${esc(workItem.id)}"><p>${esc(stillOpenSentence(personRecord, focusClaim, noun))}</p><p><a href="#fields/${esc(focusClaim.id)}">Open ${esc(focusClaim.name)}</a></p></div>`
+      : `<p class="cloud-read" id="offer-cloud-read-${esc(workItem.id)}">Choose a skill to see how many points the work can still add.</p>`;
+    const legend = `<p class="legend">${A.fields.filter((item) => A.competencies.some((claim) => claim.field === item.id && shown.has(claim.id))).map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}<span class="cloud-spent-key"><i></i>No points left on this line</span></p>`;
+    return `<section class="skill-cloud offer-skill-cloud" data-offer-cloud="${esc(workItem.id)}" aria-labelledby="offer-cloud-title-${esc(workItem.id)}">
+      <h3 class="section-title" id="offer-cloud-title-${esc(workItem.id)}">Skills this ${esc(noun)} can mark</h3>
+      <p class="muted">A larger, deeper mark means more points the work can still add on that line, up to 4. ${esc(ceiling)} The line keeps the furthest stage, so a skill already at advanced stays small.</p>
+      <div class="cloud-stage" role="group" aria-label="Skills this ${esc(noun)} can still mark">${halos}${skills}</div>
+      ${reading}
+      ${legend}
+    </section>`;
+  }
+
   function learnCard(item) {
     const bundle = fieldBundle(item.id);
     const skills = bundle.skills.map((claim) => claim.short).join(", ");
@@ -2923,7 +3040,10 @@ function levelLabel(n) {
     const workshops = openSittings("workshop").map(offerCard).join("");
     const projects = openSittings("project").map(offerCard).join("");
     const recordLabel = state.role === "student" ? "Your record" : `${firstName(personRecord)}’s record`;
-    const planTitle = state.role === "student" ? "Already on your plan" : `On ${firstName(personRecord)}’s plan`;
+    const planTitle = state.role === "student" ? "Your agenda" : `${firstName(personRecord)}’s agenda`;
+    const planLede = state.role === "student"
+      ? "Coming sittings where you already have a place."
+      : `Coming sittings where ${firstName(personRecord)} already has a place.`;
     return `<header class="page-head">
         <p class="eyebrow">${state.role === "student" ? "Start here" : esc(personRecord.name)}</p>
         <h2>What would you like to learn?</h2>
@@ -2948,6 +3068,7 @@ function levelLabel(n) {
       </section>
       <section class="ask" aria-labelledby="plan-title">
         <h3 class="section-title" id="plan-title">${esc(planTitle)}</h3>
+        <p class="muted">${esc(planLede)}</p>
         ${planGlance(personRecord)}
         <p><a href="#plan">See every sitting, including lectures</a>. A lecture is worth 0 points.</p>
         <p class="muted"><a href="#panel">${esc(recordLabel)}</a> has the marks. <a href="#model">How credit works</a>.</p>
@@ -3497,6 +3618,17 @@ function levelLabel(n) {
         cloudFocus = "";
       }
       render();
+      return;
+    }
+    if (action === "offer-cloud") {
+      const claim = competency(node.dataset.id);
+      if (!claim) return;
+      offerCloudFocus = { parentId: node.dataset.parent || "", skillId: claim.id };
+      state.competencyId = claim.id;
+      persist();
+      render();
+      const reading = document.getElementById("offer-cloud-read-" + offerCloudFocus.parentId);
+      if (reading) reading.scrollIntoView({ block: "nearest" });
       return;
     }
     if (action === "cloud-focus") {
