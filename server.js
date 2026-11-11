@@ -12,6 +12,8 @@ const FILES = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/index.html": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+  "/i18n.js": ["i18n.js", "text/javascript; charset=utf-8"],
+  "/content-fr.js": ["content-fr.js", "text/javascript; charset=utf-8"],
   "/data.js": ["data.js", "text/javascript; charset=utf-8"],
   "/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
@@ -138,6 +140,7 @@ function cleanTask(item) {
 function cleanSnapshot(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   return {
+    lang: src.lang === "fr" ? "fr" : "en",
     name: clip(src.name, 40),
     today: clip(src.today, 20),
     projects: take(src.projects, 6, (name) => clip(name, 80) || null),
@@ -147,6 +150,50 @@ function cleanSnapshot(raw) {
     skills: take(src.skills, 16, cleanSkill),
     toLearn: take(src.toLearn, 6, cleanProposal),
     tasks: take(src.tasks, 12, cleanTask),
+  };
+}
+
+function cleanCaseloadStudent(item) {
+  if (!item || typeof item !== "object") return null;
+  const name = clip(item.name, 40);
+  if (!name) return null;
+  const shared = Number(item.sharedPoints);
+  const total = Number(item.totalPoints);
+  const days = Number(item.daysSinceEvidence);
+  const age = Number(item.ageYears);
+  return {
+    name,
+    ageYears: Number.isFinite(age) ? Math.round(age * 10) / 10 : null,
+    attention: clip(item.attention, 80),
+    attentionId: clip(item.attentionId, 20),
+    sharedPoints: Number.isInteger(shared) ? Math.max(0, Math.min(16, shared)) : 0,
+    totalPoints: Number.isInteger(total) ? Math.max(0, Math.min(52, total)) : 0,
+    lastEvidence: clip(item.lastEvidence, 120),
+    daysSinceEvidence: Number.isInteger(days) ? Math.max(0, Math.min(4000, days)) : null,
+    workshopsOpen: take(item.workshopsOpen, 4, (name) => clip(name, 80) || null),
+    projects: take(item.projects, 4, (name) => clip(name, 80) || null),
+    recommendedProject: clip(item.recommendedProject, 80),
+    scaffold: clip(item.scaffold, 200),
+    sharedShort: take(item.sharedShort, 4, (name) => clip(name, 60) || null),
+    nextSitting: clip(item.nextSitting, 120),
+    why: clip(item.why, 180),
+  };
+}
+
+function cleanCaseload(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    lang: src.lang === "fr" ? "fr" : "en",
+    today: clip(src.today, 20),
+    role: src.role === "director" ? "director" : "mentor",
+    viewer: clip(src.viewer, 60),
+    students: take(src.students, 8, cleanCaseloadStudent),
+    toCoach: take(src.toCoach, 8, (item) => {
+      if (!item || typeof item !== "object") return null;
+      const name = clip(item.name, 40);
+      if (!name) return null;
+      return { name, why: clip(item.why, 180), attentionId: clip(item.attentionId, 20) };
+    }),
   };
 }
 
@@ -162,6 +209,25 @@ function cleanMessages(raw) {
   return rows.slice(-8);
 }
 
+function caseloadPrompt(snapshot) {
+  const who = snapshot.role === "director" ? "the director" : "a mentor";
+  return [
+    `You are the Continuum atelier assistant for ${who}. You speak about their caseload: which students are in difficulty and who needs coaching this week.`,
+    `The viewer's name is ${snapshot.viewer || "the mentor"}. Today in the atelier is ${snapshot.today || "the date in the record"}. Use that date. Do not use any other calendar.`,
+    "Use only the record below. If a student is not in the record, say they are not on this caseload. Do not invent a student, a sitting, or a score.",
+    "toCoach is already in order: who needs a meeting first. When they ask who needs coaching, help, or is in difficulty, start from toCoach in that order. Name the student, the why, the age, and one next step that is already in the record (a sitting, an open workshop, a recommended project, or a shared subject still short of proficient). Name at most three students unless they asked for the whole caseload.",
+    "If they ask who is behind for their age, compare ageYears with sharedPoints in this cohort only. Do not invent a national standard.",
+    "A sitting holds a place. Advice does not add a mark and does not write a report. Shared subjects are algebra, writing, mechanics, and ethics. Proficient is 3 points on a line. No evidence yet is not 0 points.",
+    snapshot.lang === "fr"
+      ? "Answer in French, using vous. Keep the same facts. Do not switch into English unless a name or a title in the record is already in English."
+      : "Answer in English.",
+    "Write plain sentences. No headings and no bullet lists. At most 110 words, or 140 if they asked for the whole caseload.",
+    "",
+    "Record:",
+    JSON.stringify(snapshot),
+  ].join("\n");
+}
+
 function systemPrompt(mood, snapshot) {
   return [
     "You are the Continuum atelier assistant. You speak to one student about their own coming sittings, about a task that could move a skill, and about which skills to work on from their current stages.",
@@ -173,6 +239,9 @@ function systemPrompt(mood, snapshot) {
     "This mood replaces any mood from earlier in the conversation. Name the mood in the first sentence, and let it change what you ask them to do.",
     "When you suggest a task, use a task from the record, or practice on a part of a skill that still has room. Say which skill it would move. Do not invent a new assignment.",
     "toLearn is this student's progress, already put in order. Shared subjects short of proficient come first, then skills already started and still short of proficient, then room left before advanced. When they ask which skills to learn, or when you suggest what to work on, propose only skills from toLearn, in that order. Name the skill, its field, and its stage. Use the why. If where is set, that sitting can carry the skill. Naming it does not register them. If toLearn is empty, say the lines you can see are as far as a skill goes. A proposal is advice. It does not place a mark.",
+    snapshot.lang === "fr"
+      ? "Answer in French, using vous. Keep the same facts. Do not switch into English unless a name or a title in the record is already in English."
+      : "Answer in English.",
     "Write plain sentences. No headings and no bullet lists. At most 90 words, or 120 when they ask which skills to learn and the mood is steady or curious. If the mood is tired, at most 45 words and only one skill. If the mood is overwhelmed, at most 40 words, name the next sitting, and do not assign a task unless the student asked for one.",
     "",
     "Record:",
@@ -229,7 +298,7 @@ function readBody(req) {
   });
 }
 
-async function askModel(mood, messages, snapshot) {
+async function askModel(messages, system) {
   const key = process.env.XAI_API_KEY;
   if (!key) {
     const error = new Error("The assistant needs XAI_API_KEY on the server.");
@@ -249,7 +318,7 @@ async function askModel(mood, messages, snapshot) {
         store: false,
         reasoning: { effort: "low" },
         input: [
-          { role: "system", content: systemPrompt(mood, snapshot) },
+          { role: "system", content: system },
           ...messages,
         ],
       }),
@@ -285,17 +354,28 @@ async function askModel(mood, messages, snapshot) {
 
 async function handleAssistant(req, res) {
   const body = await readBody(req);
-  const mood = clip(body.mood, 20);
-  if (!MOODS[mood]) {
-    send(res, 400, { error: "Choose a mood before asking." });
-    return;
-  }
   const messages = cleanMessages(body.messages);
   if (!messages.some((item) => item.role === "user")) {
-    send(res, 400, { error: "Write a question, or pick one of the three above." });
+    send(res, 400, { error: "Write a question, or pick one of the prompts above." });
     return;
   }
-  const reply = await askModel(mood, messages, cleanSnapshot(body.snapshot));
+  const kind = clip(body.kind, 20) || "student";
+  let reply;
+  if (kind === "caseload") {
+    const snapshot = cleanCaseload(body.snapshot);
+    if (!snapshot.students.length) {
+      send(res, 400, { error: "This caseload has no students in the record." });
+      return;
+    }
+    reply = await askModel(messages, caseloadPrompt(snapshot));
+  } else {
+    const mood = clip(body.mood, 20);
+    if (!MOODS[mood]) {
+      send(res, 400, { error: "Choose a mood before asking." });
+      return;
+    }
+    reply = await askModel(messages, systemPrompt(mood, cleanSnapshot(body.snapshot)));
+  }
   send(res, 200, { reply });
 }
 

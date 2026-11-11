@@ -207,6 +207,11 @@ a { color: inherit; }
   align-items: end;
   justify-content: flex-end;
 }
+.lang-seg button {
+  min-width: 2.4rem;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
 .who label {
   display: grid;
   gap: 0.15rem;
@@ -360,6 +365,109 @@ a.field-card:hover {
 .field-steps span { color: var(--ink-soft); font-size: 0.9rem; }
 .field-steps strong { color: var(--ink); font-weight: 560; }
 
+.age-chart {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.95rem 1rem 0.9rem;
+  margin: 0.2rem 0 1.2rem;
+  max-width: 52rem;
+}
+.age-chart h3 { margin: 0; font-size: 1.35rem; }
+.age-chart .legend { margin: 0.35rem 0 0.15rem; }
+.age-chart .chart-scroll { margin-top: 0.35rem; }
+.age-chart svg { display: block; width: 100%; height: auto; }
+.age-tick {
+  font-family: var(--sans);
+  font-size: 11px;
+  fill: var(--ink-soft);
+}
+.age-axis {
+  font-family: var(--sans);
+  font-size: 11px;
+  fill: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+.age-guide { stroke: var(--ink); stroke-width: 1.15; stroke-dasharray: 4 4; }
+.age-guide-label {
+  font-family: var(--sans);
+  font-size: 10px;
+  fill: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+.age-dot { cursor: pointer; color: var(--c, var(--ink)); }
+.age-dot .hit { fill: transparent; }
+.age-dot .mark {
+  fill: var(--paper-2);
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+.age-dot.is-mine .mark { fill: currentColor; stroke: var(--ink); stroke-width: 1.4; }
+.age-dot.is-ghost .mark { opacity: 0.7; }
+.age-dot:focus .mark,
+.age-dot:hover .mark { stroke: var(--ink); stroke-width: 2.4; }
+.age-name {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 560;
+  fill: var(--ink);
+  pointer-events: none;
+}
+.age-dot.is-ghost .age-name { fill: var(--ink-soft); }
+.age-key-mine i,
+.age-key-ghost i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.3rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink);
+  vertical-align: -0.05rem;
+}
+.age-key-mine i { background: var(--ink); }
+.age-key-ghost i { background: var(--paper-2); }
+.age-strip {
+  list-style: none;
+  padding: 0;
+  margin: 0.65rem 0 0;
+  display: grid;
+  gap: 0.2rem;
+}
+.age-strip button {
+  display: grid;
+  grid-template-columns: 5.5rem 4.6rem minmax(5.5rem, 1fr) auto;
+  gap: 0.35rem 0.7rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  padding: 0.38rem 0.5rem;
+  font-weight: 450;
+}
+.age-strip li.is-ghost button { opacity: 0.62; }
+.age-strip button:hover,
+.age-strip button:focus-visible { background: var(--paper); border-color: var(--line); }
+.age-strip b {
+  font-family: var(--serif);
+  font-weight: 560;
+}
+.age-pts {
+  justify-self: end;
+  text-align: right;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
+.age-pts strong {
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  font-weight: 560;
+}
+
 .skill-graph {
   background: var(--paper-2);
   border: 1px solid var(--line);
@@ -489,6 +597,53 @@ main {
 .card { padding: 0.95rem 1rem 1.05rem; }
 .card h3, .ecd-col h3 { margin: 0.15rem 0 0.4rem; font-size: 1.28rem; }
 .card p:last-child { margin-bottom: 0; }
+
+.workshop-card { padding: 0; overflow: hidden; min-width: 0; }
+.workshop-copy { padding: 0.9rem 1rem 1.05rem; }
+.workshop-plate {
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(28, 25, 23, 0.03), transparent 72%),
+    #f7f3eb;
+  border-bottom: 1px solid var(--line);
+}
+.workshop-plate svg { display: block; width: 100%; min-width: 0; height: auto; }
+.workshop-plate text { font-family: var(--sans); fill: var(--ink); }
+.workshop-plate .serif { font-family: var(--serif); font-weight: 560; }
+.workshop-plate .soft { fill: var(--ink-soft); }
+.workshop-plate .tone-fill { fill: currentColor; }
+.workshop-plate .math { color: var(--c-mathematics); }
+.workshop-plate .english { color: var(--c-english); }
+.workshop-plate .physics { color: var(--c-physics); }
+.workshop-plate .philosophy { color: var(--c-philosophy); }
+.workshop-plate .disc {
+  fill: var(--paper-2);
+  stroke: currentColor;
+  stroke-width: 1.35;
+}
+.workshop-plate .icon path,
+.workshop-plate .icon line,
+.workshop-plate .wave,
+.workshop-plate .walk,
+.workshop-plate .hair {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.workshop-plate .icon path,
+.workshop-plate .icon line { stroke: currentColor; stroke-width: 1.45; }
+.workshop-plate .icon path.solid { fill: currentColor; stroke: none; }
+.workshop-plate .wave { stroke: currentColor; stroke-width: 1.8; }
+.workshop-plate .walk { stroke: var(--line-strong); stroke-width: 1.15; stroke-dasharray: 3 4; }
+.workshop-plate .hair { stroke: var(--line-strong); stroke-width: 1.15; }
+.workshop-plate .sheet {
+  fill: var(--paper-2);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.workshop-plate .rule { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.workshop-plate .rule.faint { stroke: var(--line-strong); stroke-width: 1.15; }
+.workshop-plate .strike { stroke: var(--ink); stroke-width: 1.25; stroke-linecap: round; }
 
 .field-philosophy { --c: var(--c-philosophy); }
 .field-mathematics { --c: var(--c-mathematics); }
@@ -1666,7 +1821,9 @@ input[type="checkbox"] {
   .ecd { grid-template-columns: 1fr; }
   .gutter { flex-direction: row; padding: 0.2rem 0; }
   .gutter b { transform: rotate(90deg); }
-  .panel-grid, .grid-3, .grid-2, .shelf, .map-cards, .activity-board { grid-template-columns: 1fr; }
+  .panel-grid, .grid-3, .grid-2, .shelf, .map-cards, .activity-board { grid-template-columns: minmax(0, 1fr); }
+  .age-strip button { grid-template-columns: 4.6rem 4.2rem minmax(0, 1fr); }
+  .age-pts { grid-column: 1 / -1; justify-self: start; text-align: left; }
   .inspector { position: static; order: -1; }
   .site-foot { flex-direction: column; align-items: flex-start; }
 }

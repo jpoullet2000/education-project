@@ -37,6 +37,7 @@
       planned: [],
       moods: {},
       assistant: {},
+      lang: "en",
     };
   }
 
@@ -72,15 +73,55 @@
     { id: "task", label: "Suggest one task that would move a skill." },
     { id: "prepare", label: "What should I prepare before the next sitting?" },
   ];
+  const CASELOAD_PROMPTS = [
+    { id: "coach" },
+    { id: "age" },
+    { id: "week" },
+  ];
+  const COACH_RANK = { challenge: 0, stale: 1, intake: 2, workshops: 3, open: 4, withheld: 5, ready: 6, endorsed: 7 };
 
   const byId = (list, id) => list.find((item) => item.id === id);
-  const competency = (id) => byId(A.competencies, id);
   const student = (id) => byId(A.students, id);
-  const person = (id) => byId(A.people, id);
-  const project = (id) => byId(A.projects, id);
-  const workshop = (id) => byId(A.workshops, id);
-  const field = (id) => byId(A.fields, id);
   const current = () => student(state.studentId) || A.students[0];
+
+  function t(key, vars) {
+    const i18n = globalThis.ATELIER_I18N;
+    if (!i18n || typeof i18n.t !== "function") return key;
+    return i18n.t(state.lang === "fr" ? "fr" : "en", key, vars);
+  }
+
+  function extraOf(bucket, id) {
+    if (state.lang !== "fr" || id == null) return null;
+    const pack = globalThis.ATELIER_I18N && ATELIER_I18N.content && ATELIER_I18N.content.fr;
+    return pack && pack[bucket] && pack[bucket][id] ? pack[bucket][id] : null;
+  }
+
+  function localize(bucket, item, nested) {
+    if (!item) return item;
+    const extra = extraOf(bucket, item.id != null ? item.id : item.n);
+    if (!extra) return item;
+    const out = Object.assign({}, item, extra);
+    for (const key of nested || []) {
+      if (!Array.isArray(item[key])) continue;
+      const nest = extra[key];
+      if (!nest || typeof nest !== "object") continue;
+      out[key] = item[key].map((row) => {
+        if (!row || row.id == null || !nest[row.id]) return row;
+        return Object.assign({}, row, nest[row.id]);
+      });
+    }
+    if (Array.isArray(extra.rules)) out.rules = extra.rules;
+    if (extra.contributor && item.contributor) {
+      out.contributor = Object.assign({}, item.contributor, extra.contributor);
+    }
+    return out;
+  }
+
+  const competency = (id) => localize("competencies", byId(A.competencies, id), ["parts"]);
+  const person = (id) => localize("people", byId(A.people, id));
+  const project = (id) => localize("projects", byId(A.projects, id), ["features", "activities"]);
+  const workshop = (id) => localize("workshops", byId(A.workshops, id), ["activities"]);
+  const field = (id) => localize("fields", byId(A.fields, id));
 
   function esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -92,27 +133,37 @@
     }[ch]));
   }
 
-  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  function monthNames(kind) {
+    const i18n = globalThis.ATELIER_I18N;
+    const lang = state.lang === "fr" ? "fr" : "en";
+    const table = kind === "short"
+      ? (i18n && i18n.monthsShort) || {}
+      : (i18n && i18n.months) || {};
+    return table[lang] || table.en || [];
+  }
 
   function formatDate(iso) {
     if (!iso) return "";
     const [y, m, d] = iso.split("-").map(Number);
-    if (!y || !m || !d || !MONTHS[m - 1]) return "";
-    return `${d} ${MONTHS[m - 1]} ${y}`;
+    const months = monthNames();
+    if (!y || !m || !d || !months[m - 1]) return "";
+    return `${d} ${months[m - 1]} ${y}`;
   }
 
   function formatMonth(iso) {
     const [y, m] = iso.split("-").map(Number);
-    if (!y || !MONTHS[m - 1]) return "";
-    return `${MONTHS[m - 1]} ${y}`;
+    const months = monthNames();
+    if (!y || !months[m - 1]) return "";
+    return `${months[m - 1]} ${y}`;
   }
 
   function weekdayName(iso) {
     const stamp = Date.parse(iso + "T12:00:00Z");
     if (Number.isNaN(stamp)) return "";
-    return WEEKDAYS[new Date(stamp).getUTCDay()];
+    const i18n = globalThis.ATELIER_I18N;
+    const lang = state.lang === "fr" ? "fr" : "en";
+    const days = (i18n && i18n.weekdays && (i18n.weekdays[lang] || i18n.weekdays.en)) || [];
+    return days[new Date(stamp).getUTCDay()] || "";
   }
 
   function normalizeTime(value) {
@@ -151,23 +202,31 @@
   return false;
 }
 
-function levelLabel(n) {
-    if (n == null) return "Unobserved";
+  function levelLabel(n) {
+    if (n == null) return t("level.unobserved");
+    const extra = extraOf("levels", String(n));
+    if (extra && extra.label) return extra.label;
     const row = A.levels.find((item) => item.n === n);
     return row ? row.label : String(n);
   }
 
   function mediaLabel(id) {
+    const extra = extraOf("media", id);
+    if (extra && extra.label) return extra.label;
     const row = A.media.find((item) => item.id === id);
     return row ? row.label : id;
   }
 
   function evidenceFor(studentId) {
-    return A.evidence.filter((item) => item.studentId === studentId);
+    return A.evidence
+      .filter((item) => item.studentId === studentId)
+      .map((item) => localize("evidence", item));
   }
 
   function notesFor(studentId) {
-    return A.notes.filter((item) => item.studentId === studentId);
+    return A.notes
+      .filter((item) => item.studentId === studentId)
+      .map((item) => localize("notes", item));
   }
 
   function historyOf(studentId, competencyId) {
@@ -346,22 +405,22 @@ function levelLabel(n) {
   }
 
   function attention(personRecord) {
-    if (openChallenges(personRecord.id).length) return { id: "challenge", label: "Open challenge" };
+    if (openChallenges(personRecord.id).length) return { id: "challenge", label: t("flag.challenge") };
     const last = lastEvidenceItem(personRecord.id);
-    if (last && daysSince(last.date) > A.staleDays) return { id: "stale", label: "No recent evidence" };
+    if (last && daysSince(last.date) > A.staleDays) return { id: "stale", label: t("flag.stale") };
     const phase = workshopPhase(personRecord);
-    if (phase === "intake") return { id: "intake", label: "Intake, no evidence yet" };
-    if (phase === "workshops") return { id: "workshops", label: "Workshops still open" };
+    if (phase === "intake") return { id: "intake", label: t("flag.intake") };
+    if (phase === "workshops") return { id: "workshops", label: t("flag.workshops") };
     const decision = state.endorsements[personRecord.id];
     if (floorMet(personRecord) && decision && decision.decision === "withhold") {
-      return { id: "withheld", label: "Advancement withheld" };
+      return { id: "withheld", label: t("flag.withheld") };
     }
     if (floorMet(personRecord) && decision && decision.decision === "endorse") {
-      return { id: "endorsed", label: "Advancement endorsed" };
+      return { id: "endorsed", label: t("flag.endorsed") };
     }
-    if (floorMet(personRecord)) return { id: "ready", label: "Shared subjects are proficient" };
+    if (floorMet(personRecord)) return { id: "ready", label: t("flag.ready") };
     const gap = primaryOpenFloor(personRecord);
-    if (!gap) return { id: "open", label: "Skills still moving" };
+    if (!gap) return { id: "open", label: t("flag.open") };
     return { id: "open", label: `${competency(gap.id).name} · ${levelLabel(levelOf(personRecord.id, gap.id)).toLowerCase()}` };
   }
 
@@ -371,9 +430,9 @@ function levelLabel(n) {
 
   function mediaSentence(personRecord) {
     const list = mediaOf(personRecord);
-    if (!list.length) return "No medium preference is on file yet.";
-    if (list.length === 1) return `Prefers ${mediaLabel(list[0]).toLowerCase()}.`;
-    return `Prefers ${mediaLabel(list[0]).toLowerCase()}, then ${mediaLabel(list[1]).toLowerCase()}.`;
+    if (!list.length) return t("media.none");
+    if (list.length === 1) return t("media.prefersOne", { one: mediaLabel(list[0]).toLowerCase() });
+    return t("media.prefersTwo", { one: mediaLabel(list[0]).toLowerCase(), two: mediaLabel(list[1]).toLowerCase() });
   }
 
   function firstName(personRecord) {
@@ -420,7 +479,7 @@ function levelLabel(n) {
   }
 
   function pointsLabel(n) {
-    return n === 1 ? "1 point" : `${n} points`;
+    return n === 1 ? t("points.one") : t("points.many", { n });
   }
 
   function offerPoints(ids) {
@@ -435,20 +494,20 @@ function levelLabel(n) {
 
   function offerPhrase(ids) {
     const n = offerPoints(ids);
-    if (n === 0) return "0 points";
-    return `Up to ${pointsLabel(n)}`;
+    if (n === 0) return t("points.zero");
+    return t("points.upTo", { n: pointsLabel(n) });
   }
 
   function skillsPointPhrase(ids) {
-    if (!ids.length) return "No skill line moves.";
+    if (!ids.length) return t("points.noneMove");
     const names = namedList(ids);
-    if (ids.length === 1) return `${names}, 4 points.`;
-    return `${names}, 4 points each.`;
+    if (ids.length === 1) return t("points.oneSkill", { names });
+    return t("points.eachSkill", { names });
   }
 
   function stagePointsSentence(level) {
-    if (level == null) return "No points on this line yet. A mark is worth 1, 2, 3, or 4 points, matching the stage.";
-    return `${levelLabel(level)} is ${pointsLabel(level)} on this line. A later mark can raise it as far as 4 points.`;
+    if (level == null) return t("points.noneYet");
+    return t("points.stageLine", { stage: levelLabel(level), points: pointsLabel(level) });
   }
 
   function evidencePoints(item) {
@@ -456,23 +515,23 @@ function levelLabel(n) {
   }
 
   function workshopStatusLabel(status) {
-    if (status === "done") return "Done";
-    if (status === "enrolled") return "In progress";
-    return "Not started";
+    if (status === "done") return t("status.done");
+    if (status === "enrolled") return t("status.inProgress");
+    return t("status.notStarted");
   }
 
   function projectStatusLabel(personRecord, projectId) {
-    if (personRecord.projectIds.includes(projectId)) return "Your project";
-    if (personRecord.recommendedProjectId === projectId) return "Seat waiting";
-    return "Not your seat";
+    if (personRecord.projectIds.includes(projectId)) return t("status.yourProject");
+    if (personRecord.recommendedProjectId === projectId) return t("status.seatWaiting");
+    return t("status.notYourSeat");
   }
 
   function projectAvailability(personRecord, projectId) {
     if (personRecord.projectIds.includes(projectId)) {
-      return state.role === "student" ? "You are on this project." : `${firstName(personRecord)} is on this project.`;
+      return state.role === "student" ? t("status.onProjectYou") : t("status.onProjectThem", { name: firstName(personRecord) });
     }
-    if (personRecord.recommendedProjectId === projectId) return "A seat is waiting.";
-    return "Open to read.";
+    if (personRecord.recommendedProjectId === projectId) return t("status.seatIsWaiting");
+    return t("status.openToRead");
   }
 
   function actionStatus(personRecord, source, parent) {
@@ -492,12 +551,16 @@ function levelLabel(n) {
     const sum = item.activities.reduce((total, activity) => total + offerPoints(activity.competencyIds), 0);
     const cap = offerPoints(item.elicits);
     if (sum <= cap) return "";
-    return `The parts share skills, so the ceiling is ${pointsLabel(cap)}, not ${pointsLabel(sum)}.`;
+    return t("overlap.note", { cap: pointsLabel(cap), sum: pointsLabel(sum) });
+  }
+
+  function activityKind(kind) {
+    return t("activity." + kind) === "activity." + kind ? kind : t("activity." + kind);
   }
 
   function activityList(activities) {
     return `<ul class="point-mini">${activities.map((activity) => `<li>
-      <span>${esc(activity.kind)} · ${esc(activity.name)}</span>
+      <span>${esc(activityKind(activity.kind))} · ${esc(activity.name)}</span>
       <b>${esc(offerPhrase(activity.competencyIds))}</b>
       <small>${esc(skillsPointPhrase(activity.competencyIds))}</small>
     </li>`).join("")}</ul>`;
@@ -509,11 +572,11 @@ function levelLabel(n) {
       .concat(A.projects.map((item) => ({ parent: item, source: "project" })))
       .flatMap(({ parent, source }) => parent.activities.map((activity) => ({ activity, parent, source })))
       .map(({ activity, parent, source }) => {
-        const href = source === "workshop" ? "#workshops" : `#projects/${parent.id}`;
+        const href = source === "workshop" ? `#workshops/${parent.id}` : `#projects/${parent.id}`;
         const n = offerPoints(activity.competencyIds);
         const points = n === 0
-          ? `<strong>0</strong> <span>points</span>`
-          : `<strong>${n}</strong> <span>points at most</span>`;
+          ? `<strong>0</strong> <span>${esc(t("points.word"))}</span>`
+          : `<strong>${n}</strong> <span>${esc(t("points.atMost"))}</span>`;
         return `<tr class="${actionCurrent(personRecord, source, parent) ? "is-yours" : ""}">
           <th scope="row">${esc(activity.name)}</th>
           <td>${esc(activity.kind)}</td>
@@ -551,7 +614,7 @@ function levelLabel(n) {
       return `${name} has no evidence since ${formatDate(last.date)} (${daysSince(last.date)} days). ${mediaSentence(personRecord)} The last scored work was "${last.title}". Meet, and set the next observation in that medium. Writing can still be scored. It can be short, and it can come after the work.`;
     }
     if (flag.id === "intake") {
-      return `${name} is in intake. Let the field sampler finish before a project seat. An empty chart means the work has not been scored yet.`;
+      return `${name} is in intake. Let ${workshop("sampler").name} finish before a project seat. An empty chart means the work has not been scored yet.`;
     }
     if (flag.id === "workshops") {
       const enrolled = Object.entries(personRecord.workshops)
@@ -581,7 +644,9 @@ function levelLabel(n) {
   function namedList(ids) {
     const names = ids.map((id) => competency(id).name);
     if (names.length < 2) return names.join("");
-    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+    const conj = t("and");
+    if (state.lang === "fr") return `${names.slice(0, -1).join(", ")} ${conj} ${names[names.length - 1]}`;
+    return `${names.slice(0, -1).join(", ")}, ${conj} ${names[names.length - 1]}`;
   }
 
   function floorCopy(personRecord) {
@@ -662,6 +727,7 @@ function levelLabel(n) {
       planned: state.planned,
       moods: state.moods,
       assistant: state.assistant,
+      lang: state.lang,
     };
     try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch (err) { /* private mode */ }
   }
@@ -683,6 +749,11 @@ function levelLabel(n) {
     if (!student(state.studentId)) state.studentId = "amina";
     if (!person(state.mentorId)) state.mentorId = "ibarra";
     if (!["student", "mentor", "director"].includes(state.role)) state.role = "student";
+    if (state.lang !== "fr") state.lang = "en";
+    try {
+      const qlang = new URLSearchParams(location.search).get("lang");
+      if (qlang === "fr" || qlang === "en") state.lang = qlang;
+    } catch (err) { /* keep saved lang */ }
     if (!competency(state.competencyId)) state.competencyId = "PE";
     if (state.skill !== "all" && !competency(state.skill)) state.skill = "all";
     if (!focusOk(state.focus)) state.focus = { type: "competency", id: "PE" };
@@ -939,6 +1010,8 @@ function levelLabel(n) {
   }
 
   function health() {
+    const savedLang = state.lang;
+    state.lang = "en";
     const problems = [];
     const expect = (ok, message) => { if (!ok) problems.push(message); };
     const lv = (studentId, id) => levelOf(studentId, id);
@@ -1053,12 +1126,28 @@ function levelLabel(n) {
     expect(new Set(activityIds).size === activityIds.length, "unique activity ids");
     expect(offerPoints(workshop("sampler").elicits) === 0, "sampler points");
     expect(offerPoints(workshop("diagnostic").elicits) === 24, "diagnostic points");
+    for (const item of A.workshops) {
+      const plate = workshopPlate(item);
+      expect(plate.includes(`id="plate-${item.id}"`) && plate.includes("<svg"), "workshop plate " + item.id);
+    }
+    expect(workshopPlate(workshop("diagnostic")).includes("Who is affected") && workshopPlate(workshop("diagnostic")).includes("Flood hours"), "diagnostic plate stations");
+    expect(workshopPlate(workshop("sampler")).includes("No mark") && workshopPlate(workshop("sampler")).includes("Tide table"), "sampler plate empty");
+    expect(workshopPlate(workshop("media")).includes("Reconstruction is the mark") && workshopPlate(workshop("media")).includes("Spring"), "medium plate");
+    expect(workshopPlate(workshop("argument")).includes("Revision") && workshopPlate(workshop("argument")).includes("Safer road"), "argument plate");
     expect(offerPoints(project("coastal").elicits) === 44, "coastal points");
     expect(evidencePoints(byId(A.evidence, "ev-amina-diag")) === 9, "amina diagnostic points");
     for (const personRecord of A.students) {
       expect(!!person(personRecord.mentorId), "mentor " + personRecord.id);
+      expect(/^\d{4}-\d{2}-\d{2}$/.test(personRecord.born) && personRecord.born < personRecord.started, "born " + personRecord.id);
+      const years = ageExact(personRecord);
+      expect(years >= 12 && years <= 19, "age range " + personRecord.id);
       for (const id of personRecord.projectIds) expect(!!project(id), "seat " + id);
     }
+    expect(ageExact(student("rafi")) < ageExact(student("soren")), "rafi younger than soren");
+    expect(ageChartHTML(["amina"]).includes("age-chart") && ageChartHTML(["amina"]).includes("Amina"), "age chart");
+    const caseload = caseloadSnapshot(A.students);
+    expect(caseload.students.length === A.students.length && caseload.toCoach.length >= 1, "caseload snapshot");
+    expect(caseload.toCoach.some((row) => row.name === "Rafi" || row.name === "Jun" || row.name === "Leo"), "caseload toCoach");
     const ids = A.evidence.map((item) => item.id);
     expect(new Set(ids).size === ids.length, "unique evidence ids");
     expect(!!A.materialActivity, "material activity present");
@@ -1159,6 +1248,10 @@ function levelLabel(n) {
         }
       }
     }
+    expect(typeof globalThis.ATELIER_I18N.t === "function", "i18n t");
+    expect(globalThis.ATELIER_I18N.t("fr", "nav.workshops") === "Ateliers", "fr workshops nav");
+    expect(!!(globalThis.ATELIER_I18N.content && ATELIER_I18N.content.fr && ATELIER_I18N.content.fr.workshops.sampler.name), "fr sampler overlay");
+    state.lang = savedLang;
     return problems;
   }
 
@@ -1316,7 +1409,7 @@ function levelLabel(n) {
         ${nodes}
       </svg>
       <figcaption class="legend">
-        ${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}
+        ${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(field(item.id).short)}</span>`).join("")}
         <span>Four arcs are the stages: emerging, developing, proficient, advanced. A stage is worth its number in points, from 1 to 4. The fill stops at the furthest stage reached. Each dot is an exercise, a test, or a project, and one piece of work can dot several skills. A dashed arc has no evidence yet. The bar under a field follows the skills in that field that already have evidence. Lines join subjects to read together.</span>
       </figcaption>
     </figure>`;
@@ -1609,49 +1702,59 @@ function levelLabel(n) {
 
   function renderModel() {
     const layers = A.layers.map((layer) => {
+      const loc = extraOf("layers", layer.id);
+      const name = loc && loc.name ? loc.name : layer.name;
+      const text = loc && loc.text ? loc.text : layer.text;
       const open = state.layer === layer.id;
       return `<section class="layer ${open ? "is-open" : ""}">
-        <h3><button type="button" data-action="layer" data-id="${layer.id}" aria-expanded="${open}"><span>${esc(layer.n)}</span>${esc(layer.name)}</button></h3>
-        ${open ? `<p>${esc(layer.text)}</p>` : ""}
+        <h3><button type="button" data-action="layer" data-id="${layer.id}" aria-expanded="${open}"><span>${esc(layer.n)}</span>${esc(name)}</button></h3>
+        ${open ? `<p>${esc(text)}</p>` : ""}
       </section>`;
     }).join("");
-    const decisions = A.decisions.map((item) => `<article class="card"><h3>${esc(item.title)}</h3><p>${esc(item.text)}</p></article>`).join("");
+    const decisions = A.decisions.map((item, index) => {
+      const loc = extraOf("decisions", String(index));
+      const title = loc && loc.title ? loc.title : item.title;
+      const text = loc && loc.text ? loc.text : item.text;
+      return `<article class="card"><h3>${esc(title)}</h3><p>${esc(text)}</p></article>`;
+    }).join("");
     return `<article class="page" data-page="model">
       <header class="page-head">
-        <p class="eyebrow">The model</p>
-        <h2>Claims, evidence, tasks.</h2>
-        <p class="lede">Every credit in Continuum comes from a claim, an observation, and a task built to produce that observation. The same three parts structure a project, a workshop, and the monitoring panel.</p>
+        <p class="eyebrow">${esc(t("title.model"))}</p>
+        <h2>${esc(t("model.h2"))}</h2>
+        <p class="lede">${esc(t("model.lede"))}</p>
       </header>
-      <p class="eyebrow">Coastal Crossing, read three ways</p>
+      <p class="eyebrow">${esc(t("model.coastal"))}</p>
       ${ecdBoard()}
       <div class="rule">
-        <p class="eyebrow">Update rule</p>
-        <p>Every scored exercise, test, or project adds a mark on each skill it touches. The arc fills to the furthest stage those marks have reached. A mark is worth 1, 2, 3, or 4 points, matching the stage, and an action shows the most it can place. An empty arc has no evidence yet. Lines between subjects mark skills to read together. A line between subjects does not move a stage. On a field, the parts of a skill are in order. Derivatives rest on basic calculus, and integrals rest on derivatives. A part from another field can sit on that path. The mark stays on the skill. The parts are not separate scores.</p>
+        <p class="eyebrow">${esc(t("model.update"))}</p>
+        <p>${esc(t("model.updateText"))}</p>
       </div>
-      <h3 class="section-title">Decisions already in force</h3>
+      <h3 class="section-title">${esc(t("model.decisions"))}</h3>
       <div class="grid-2">${decisions}</div>
-      <h3 class="section-title">Five layers, from the field to the panel</h3>
+      <h3 class="section-title">${esc(t("model.layers"))}</h3>
       <div class="layers">${layers}</div>
-      <h3 class="section-title">Open a dashboard</h3>
-      <p class="muted">A student opens the student dashboard. A mentor opens the mentor dashboard. The director reads both. Notes you add stay in this browser.</p>
+      <h3 class="section-title">${esc(t("model.openDash"))}</h3>
+      <p class="muted">${esc(t("model.openMuted"))}</p>
       <div class="doors">
-        <button type="button" class="primary" data-action="enter" data-role="student" data-student="amina" data-competency="PE" data-route="dashboard">Open Amina’s dashboard</button>
-        <button type="button" data-action="enter" data-role="mentor" data-mentor="ibarra" data-student="jun" data-route="dashboard">Open Ibarra’s mentor dashboard</button>
-        <button type="button" data-action="enter" data-role="director" data-route="dashboard">Open both dashboards as director</button>
-        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="dashboard">Open Noor’s dashboard</button>
+        <button type="button" class="primary" data-action="enter" data-role="student" data-student="amina" data-competency="PE" data-route="dashboard">${esc(t("model.openAmina"))}</button>
+        <button type="button" data-action="enter" data-role="mentor" data-mentor="ibarra" data-student="jun" data-route="dashboard">${esc(t("model.openIbarra"))}</button>
+        <button type="button" data-action="enter" data-role="director" data-route="dashboard">${esc(t("model.openDirector"))}</button>
+        <button type="button" data-action="enter" data-role="student" data-student="noor" data-competency="PE" data-route="dashboard">${esc(t("model.openNoor"))}</button>
       </div>
     </article>`;
   }
 
   function renderMap() {
     const personRecord = current();
-    const groups = A.fields.map((item) => {
-      const cards = A.competencies.filter((claim) => claim.field === item.id).map((claim) => {
+    const groups = A.fields.map((rawField) => {
+      const item = field(rawField.id);
+      const cards = A.competencies.filter((claim) => claim.field === item.id).map((rawClaim) => {
+        const claim = competency(rawClaim.id);
         const level = levelOf(personRecord.id, claim.id);
         const elicited = []
-          .concat(A.projects.filter((row) => row.elicits.includes(claim.id)).map((row) => row.name))
-          .concat(A.workshops.filter((row) => row.elicits.includes(claim.id)).map((row) => row.name));
-        const practice = allMaterials().filter((row) => (row.competencies || []).includes(claim.id)).map((row) => row.title);
+          .concat(A.projects.filter((row) => row.elicits.includes(claim.id)).map((row) => project(row.id).name))
+          .concat(A.workshops.filter((row) => row.elicits.includes(claim.id)).map((row) => workshop(row.id).name));
+        const practice = allMaterials().filter((row) => (row.competencies || []).includes(claim.id)).map((row) => localize("materials", row).title);
         const related = neighbors(claim.id).map((id) => competency(id).short).join(", ");
         return `<article class="card map-card field-${item.id} ${state.competencyId === claim.id ? "is-selected" : ""}">
           <p class="eyebrow">${esc(item.name)}</p>
@@ -1659,9 +1762,9 @@ function levelLabel(n) {
           <p class="level-line">${meter(level, item.id)} <span>${esc(levelLabel(level))} for ${esc(firstName(personRecord))}</span></p>
           <p class="meta">${esc(stagePointsSentence(level))}</p>
           <p>${esc(claim.claim)}</p>
-          <p class="eyebrow">Evidence rules</p>
+          <p class="eyebrow">${esc(t("map.rules"))}</p>
           <ul class="rules">${claim.rules.map((rule) => `<li>${esc(rule)}</li>`).join("")}</ul>
-          <p class="meta">Elicited by ${elicited.length ? esc(elicited.join(", ")) : "no current task"}.</p>
+          <p class="meta">${esc(t("map.elicitedBy", { list: elicited.length ? elicited.join(", ") : t("map.elicitedNone") }))}</p>
           <p class="meta">Practice, with no credit: ${practice.length ? esc(practice.join(", ")) : "none on the shelf"}.</p>
           <p class="meta">Read with ${esc(related)}.</p>
         </article>`;
@@ -1675,7 +1778,7 @@ function levelLabel(n) {
     return `<article class="page" data-page="map">
       <header class="page-head">
         <p class="eyebrow">Competency model</p>
-        <h2>The map of subjects.</h2>
+        <h2>${esc(t("map.h2"))}</h2>
         <p class="lede">Thirteen subjects across mathematics, English, physics, and philosophy. The arc on each subject is how far that skill has come, and each dot is work that moved it. The bar under a field follows the skills in that field that already have evidence. Switch the student in the header to read someone else onto the same map.</p>
       </header>
       ${renderNetwork(personRecord)}
@@ -1716,7 +1819,7 @@ function levelLabel(n) {
 
   function renderProjectDetail(item) {
     if (!item) {
-      return `<article class="page" data-page="projects"><header class="page-head"><p class="eyebrow">Projects</p><h2>That project is not on the books.</h2></header><p><a href="#projects">Back to the projects</a></p></article>`;
+      return `<article class="page" data-page="projects"><header class="page-head"><p class="eyebrow">${esc(t("nav.projects"))}</p><h2>${esc(t("projects.missing"))}</h2></header><p><a href="#projects">${esc(t("projects.back"))}</a></p></article>`;
     }
     const seats = peopleOn(item.id);
     const evidence = A.evidence.filter((row) => row.sourceId === item.id).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -1756,22 +1859,22 @@ function levelLabel(n) {
     if (state.param) return renderProjectDetail(project(state.param));
     return `<article class="page" data-page="projects">
       <header class="page-head">
-        <p class="eyebrow">Task models</p>
-        <h2>Projects you can take up.</h2>
-        <p class="lede">A project is a situation built so the work can place marks on particular skills. Anyone can read a brief. The card shows the next time it meets. Registering holds a place at that sitting. The seat on the project is separate, and the score comes from the work products.</p>
+        <p class="eyebrow">${esc(t("projects.taskModels"))}</p>
+        <h2>${esc(t("projects.h2"))}</h2>
+        <p class="lede">${esc(t("projects.lede"))}</p>
       </header>
-      <div class="grid-2">${A.projects.map(projectCard).join("")}</div>
+      <div class="grid-2">${A.projects.map((row) => projectCard(project(row.id))).join("")}</div>
     </article>`;
   }
 
   function kindLabel(kind) {
-    if (kind === "workshop") return "Workshop";
-    if (kind === "project") return "Project";
-    return "Lecture";
+    if (kind === "workshop") return t("kind.workshop");
+    if (kind === "project") return t("kind.project");
+    return t("kind.lecture");
   }
 
   function allSessions() {
-    return A.sessions.concat(Array.isArray(state.planned) ? state.planned : []);
+    return A.sessions.concat(Array.isArray(state.planned) ? state.planned : []).map((item) => localize("sessions", item));
   }
 
   function sessionById(id) {
@@ -1793,7 +1896,7 @@ function levelLabel(n) {
   }
 
   function sessionHref(item) {
-    if (item.kind === "workshop") return "#workshops";
+    if (item.kind === "workshop") return "#workshops/" + item.ref;
     if (item.kind === "project") return "#projects/" + item.ref;
     return "#plan";
   }
@@ -1845,14 +1948,14 @@ function levelLabel(n) {
 
   function placeCount(item) {
     const count = rosterOf(item).length;
-    const word = item.capacity === 1 ? "place" : "places";
-    return `${count} of ${item.capacity} ${word}`;
+    const word = item.capacity === 1 ? t("place.one") : t("place.many");
+    return t("place.of", { count, capacity: item.capacity, word });
   }
 
   function rosterNames(item) {
-    const names = rosterOf(item).map((id) => student(id).name).sort((a, b) => a.localeCompare(b));
-    if (!names.length) return "No one has registered.";
-    return `Registered: ${joinNames(names)}.`;
+    const names = rosterOf(item).map((id) => student(id).name).sort((a, b) => a.localeCompare(b, state.lang === "fr" ? "fr" : "en"));
+    if (!names.length) return t("place.noneRegistered");
+    return t("place.registered", { names: joinNames(names) });
   }
 
   function registerFor(sessionId) {
@@ -1901,7 +2004,7 @@ function levelLabel(n) {
     const year = item.date.slice(0, 4);
     return `<div class="when" aria-hidden="true">
       <b>${Number(day)}</b>
-      <span>${esc(MONTHS_SHORT[Number(month) - 1])} ${esc(year)}</span>
+      <span>${esc(monthNames("short")[Number(month) - 1] || "")} ${esc(year)}</span>
       <small>${esc(weekdayName(item.date))}</small>
     </div>`;
   }
@@ -1912,16 +2015,16 @@ function levelLabel(n) {
     const full = rosterOf(item).length >= item.capacity;
     const label = sessionTitle(item);
     const when = formatDate(item.date);
-    if (!open) return `<p class="muted">Held. Registration is closed.</p>`;
-    if (state.role !== "student") return `<p class="muted">A student registers from their own account.</p>`;
+    if (!open) return `<p class="muted">${esc(t("register.heldClosed"))}</p>`;
+    if (state.role !== "student") return `<p class="muted">${esc(t("register.studentOnly"))}</p>`;
     if (mine) {
       return `<div class="action-row">
-        <button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc("Withdraw from " + label + " on " + when)}">Withdraw</button>
+        <button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc(t("withdrawFrom", { title: label, when }))}">${esc(t("withdraw"))}</button>
       </div>`;
     }
-    if (full) return `<div class="action-row"><button type="button" disabled>Full</button></div>`;
+    if (full) return `<div class="action-row"><button type="button" disabled>${esc(t("full"))}</button></div>`;
     return `<div class="action-row">
-      <button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc("Register for " + label + " on " + when)}">Register</button>
+      <button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc(t("registerFor", { title: label, when }))}">${esc(t("register"))}</button>
     </div>`;
   }
 
@@ -1937,12 +2040,12 @@ function levelLabel(n) {
     if (item.kind === "lecture" && fieldName) eyebrow += " · " + fieldName;
     if (item.kind === "workshop" && parent) eyebrow += " · " + parent.kind;
     if (item.kind === "project" && parent) eyebrow += " · " + parent.place;
-    if (!sittingOpen(item)) eyebrow += " · held";
+    if (!sittingOpen(item)) eyebrow += " · " + t("held");
     const points = item.kind === "lecture" || !parent
-      ? `<p class="point-offer"><b>0 points</b> <span>${item.kind === "lecture" ? "a lecture is not a mark" : ""}</span></p>`
+      ? `<p class="point-offer"><b>${esc(t("points.zero"))}</b> <span>${item.kind === "lecture" ? esc(t("lecture.notAMark")) : ""}</span></p>`
       : `<p class="point-offer"><b>${esc(offerPhrase(parent.elicits))}</b></p>`;
     const yours = mine
-      ? (state.role === "student" ? "You have a place." : `${firstName(current())} has a place.`)
+      ? (state.role === "student" ? t("place.youHave") : t("place.theyHave", { name: firstName(current()) }))
       : "";
     const line = `${placeCount(item)} taken. ${rosterNames(item)}${yours ? " " + yours : ""}`;
     const described = `${title}. ${formatDate(item.date)}, ${item.start} to ${item.end}. ${item.place}.`;
@@ -1968,15 +2071,15 @@ function levelLabel(n) {
     const host = person(item.hostId);
     let button = "";
     if (state.role === "student" && open && mine) {
-      button = `<button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc("Withdraw from " + title + " on " + when)}">Withdraw</button>`;
+      button = `<button type="button" data-action="withdraw" data-id="${esc(item.id)}" aria-label="${esc(t("withdrawFrom", { title, when }))}">${esc(t("withdraw"))}</button>`;
     } else if (state.role === "student" && open && rosterOf(item).length < item.capacity) {
-      button = `<button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc("Register for " + title + " on " + when)}">Register</button>`;
+      button = `<button type="button" class="primary" data-action="register" data-id="${esc(item.id)}" aria-label="${esc(t("registerFor", { title, when }))}">${esc(t("register"))}</button>`;
     } else if (open && !mine && rosterOf(item).length >= item.capacity) {
-      button = `<span class="meta">Full</span>`;
+      button = `<span class="meta">${esc(t("full"))}</span>`;
     }
-    let status = "Open.";
-    if (!open) status = "Held.";
-    else if (mine) status = state.role === "student" ? "You have a place." : `${firstName(current())} has a place.`;
+    let status = t("openDot");
+    if (!open) status = t("heldDot");
+    else if (mine) status = state.role === "student" ? t("place.youHave") : t("place.theyHave", { name: firstName(current()) });
     return `<li id="${esc(item.id)}">
       <span><a href="#plan">${esc(when)}</a> · ${esc(item.start)}–${esc(item.end)} · ${esc(item.place)}</span>
       <b>${esc(placeCount(item))}</b>
@@ -1987,12 +2090,12 @@ function levelLabel(n) {
 
   function sittingSection(kind, ref) {
     const rows = sittingsOf(kind, ref);
-    if (!rows.length) return `<p class="muted">No sitting is on the plan yet.</p>`;
+    if (!rows.length) return `<p class="muted">${esc(t("register.noSitting"))}</p>`;
     return `<ul class="point-mini">${rows.map(sittingCompact).join("")}</ul>`;
   }
 
   function agendaPoints(item) {
-    if (item.kind === "lecture") return "0 points";
+    if (item.kind === "lecture") return t("points.zero");
     const parent = sessionParent(item);
     if (!parent || !Array.isArray(parent.elicits)) return "0 points";
     return offerPhrase(parent.elicits);
@@ -2004,8 +2107,8 @@ function levelLabel(n) {
       .sort(compareSittings);
     if (!rows.length) {
       const sentence = state.role === "student"
-        ? "No place at a coming sitting yet. Register from a workshop or a project above."
-        : `${firstName(personRecord)} has no place at a coming sitting.`;
+        ? t("plan.emptyGlanceYou")
+        : t("plan.emptyGlanceThem", { name: firstName(personRecord) });
       return `<p class="empty">${esc(sentence)}</p>`;
     }
     const days = [];
@@ -2065,7 +2168,7 @@ function levelLabel(n) {
     }
     const workshopOptions = A.workshops.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
     const projectOptions = A.projects.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
-    const fieldOptions = A.fields.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+    const fieldOptions = A.fields.map((item) => `<option value="${esc(item.id)}">${esc(field(item.id).name)}</option>`).join("");
     const hostBlock = state.role === "director"
       ? `<label>Host
           <select name="hostId" required>${A.people.map((item) => `<option value="${esc(item.id)}"${item.id === "ortega" ? " selected" : ""}>${esc(item.name)}</option>`).join("")}</select>
@@ -2238,48 +2341,189 @@ function levelLabel(n) {
     focusSitting(sessionId);
   }
 
+  function plateSvg(id, viewBox, title, body) {
+    return `<svg viewBox="${viewBox}" role="img" aria-labelledby="plate-${id}">
+      <title id="plate-${id}">${esc(title)}</title>
+      ${body}
+    </svg>`;
+  }
+
+  function stationDisc(x, y, tone, dashed, icon, n, name, detail) {
+    const ring = dashed ? ' stroke-dasharray="2.6 2.8"' : "";
+    return `<g class="${tone}" transform="translate(${x} ${y})">
+      <circle class="disc" r="22"${ring}/>
+      ${icon}
+      <text class="soft" x="34" y="-6" font-size="11" letter-spacing="1.1">${n}</text>
+      <text class="serif" x="34" y="12" font-size="15">${esc(name)}</text>
+      <text class="soft" x="34" y="28" font-size="11">${esc(detail)}</text>
+    </g>`;
+  }
+
+  function plateText(id, key, fallback) {
+    const extra = extraOf("plates", id);
+    if (extra && extra[key]) return extra[key];
+    return fallback;
+  }
+
+  function workshopPlate(item) {
+    if (!item) return "";
+    const iconPage = `<g class="icon">
+      <rect x="-7" y="-11" width="14" height="20" rx="1.6" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.4"/>
+      <path d="M-4 -5 H4 M-4 0 H4 M-4 5 H1"/>
+    </g>`;
+    const iconAxes = `<g class="icon">
+      <path d="M-10 8 H10"/>
+      <path d="M-8 10 V-8"/>
+      <path d="M-8 8 L7 -6"/>
+    </g>`;
+    const iconTalk = `<g class="icon">
+      <circle cx="0" cy="-6" r="2.1" fill="currentColor" stroke="none"/>
+      <circle cx="-5.2" cy="4" r="2.1" fill="currentColor" stroke="none"/>
+      <circle cx="5.2" cy="4" r="2.1" fill="currentColor" stroke="none"/>
+    </g>`;
+    const iconSlope = `<g class="icon">
+      <path d="M-11 8 H10"/>
+      <path d="M-10 8 L8 -4"/>
+      <circle cx="-4" cy="0.2" r="2.8" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.35"/>
+    </g>`;
+    const iconClip = `<g class="icon">
+      <rect x="-10" y="-7" width="15" height="14" rx="1.6" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.4"/>
+      <path class="solid" d="M7 -4 L12 0 L7 4 Z"/>
+    </g>`;
+    const iconWave = `<g class="icon">
+      <path d="M-11 1 C-8 -7 -4 -7 -1 1 S5 9 11 1"/>
+    </g>`;
+    const iconBench = `<g class="icon">
+      <path d="M-10 -8 H8"/>
+      <circle cx="-1" cy="-8" r="1.3" fill="currentColor" stroke="none"/>
+      <path d="M-1 -6.6 L6 4"/>
+      <circle cx="6" cy="6" r="2.8" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.35"/>
+      <path d="M-11 10 H11"/>
+    </g>`;
+    const iconClaim = `<g class="icon">
+      <path d="M-9 -2 H8"/>
+      <path d="M-9 4 H3"/>
+    </g>`;
+    const iconRevision = `<g class="icon">
+      <path class="hair" d="M-8 -3 H7"/>
+      <path class="strike" d="M-9 -6 L8 0"/>
+      <path d="M-8 5 H8"/>
+    </g>`;
+    const iconQuestion = `<text class="serif tone-fill" text-anchor="middle" dominant-baseline="central" font-size="20">?</text>`;
+    const caption = (text, y) => `<text class="soft" text-anchor="middle" x="220" y="${y}" font-size="12">${esc(text)}</text>`;
+    if (item.id === "sampler") {
+      return `<figure class="workshop-plate">${plateSvg("sampler", "0 0 440 186", plateText("sampler", "title", "Four rooms on the Arne. Tide table, street note, flume, and who still gets wet. Nothing here is scored."), `
+        ${stationDisc(46, 40, "math", true, iconAxes, "01", plateText("sampler", "s1", "Tide table"), t("plate.noMark"))}
+        ${stationDisc(250, 40, "english", true, iconPage, "02", plateText("sampler", "s2", "Street note"), t("plate.noMark"))}
+        ${stationDisc(46, 112, "physics", true, iconSlope, "03", plateText("sampler", "s3", "The flume"), t("plate.noMark"))}
+        ${stationDisc(250, 112, "philosophy", true, iconTalk, "04", plateText("sampler", "s4", "Who gets wet"), t("plate.noMark"))}
+        ${caption(plateText("sampler", "caption", "Nothing here is scored."), 172)}
+      `)}</figure>`;
+    }
+    if (item.id === "diagnostic") {
+      const iconEstimation = `<g class="icon">
+        <path d="M-11 2 H11"/>
+        <path d="M0 -10 V12"/>
+        <path d="M-4 -6 H4"/>
+        <path d="M-4 10 H4"/>
+        <circle cx="0" cy="2" r="1.8" fill="currentColor" stroke="none"/>
+      </g>`;
+      const iconMechanics = `<g class="icon">
+        <path d="M-9 -12 H5"/>
+        <circle cx="-2" cy="-12" r="1.45" fill="currentColor" stroke="none"/>
+        <path d="M-2 -10.6 L8 5"/>
+        <circle cx="8" cy="7.4" r="3.6" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.45"/>
+      </g>`;
+      const iconPeople = `<g class="icon">
+        <circle cx="-6.5" cy="-8" r="2.3" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M-6.5 -5.6 V3"/>
+        <path d="M-10 8 L-6.5 3 L-3 8"/>
+        <circle cx="6.5" cy="-8" r="2.3" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M6.5 -5.6 V3"/>
+        <path d="M3 8 L6.5 3 L10 8"/>
+      </g>`;
+      return `<figure class="workshop-plate">${plateSvg("diagnostic", "0 0 440 186", plateText("diagnostic", "title", "Tuesday’s tide. Four stations: flood hours, a pendulum, a paragraph for that street, and who is affected. A station you skip stays blank."), `
+        ${stationDisc(46, 40, "math", true, iconEstimation, "01", plateText("diagnostic", "s1", "Flood hours"), plateText("diagnostic", "d1", "Algebra · Statistics"))}
+        ${stationDisc(250, 40, "physics", true, iconMechanics, "02", plateText("diagnostic", "s2", "Pendulum"), plateText("diagnostic", "d2", "Mechanics · Experiment"))}
+        ${stationDisc(46, 112, "english", true, iconPage, "03", plateText("diagnostic", "s3", "That street"), plateText("diagnostic", "d3", "Writing"))}
+        ${stationDisc(250, 112, "philosophy", true, iconPeople, "04", plateText("diagnostic", "s4", "Who is affected"), plateText("diagnostic", "d4", "Ethics"))}
+        ${caption(plateText("diagnostic", "caption", "A station you skip stays blank."), 172)}
+      `)}</figure>`;
+    }
+    if (item.id === "media") {
+      return `<figure class="workshop-plate">${plateSvg("media", "0 0 440 186", plateText("media", "title", "The weight that comes to rest. Notes, a slow-motion clip, the sandbox, and the spring on the bench. Reconstruction is the mark, the next day."), `
+        ${stationDisc(46, 40, "physics", false, iconPage, "01", plateText("media", "s1", "Notes"), plateText("media", "d1", "The page"))}
+        ${stationDisc(250, 40, "physics", false, iconClip, "02", plateText("media", "s2", "Clip"), plateText("media", "d2", "Slow motion"))}
+        ${stationDisc(46, 112, "physics", false, iconWave, "03", plateText("media", "s3", "Sandbox"), plateText("media", "d3", "The model"))}
+        ${stationDisc(250, 112, "physics", false, iconBench, "04", plateText("media", "s4", "Spring"), plateText("media", "d4", "The bench"))}
+        ${caption(plateText("media", "caption", "Reconstruction is the mark, the next day."), 172)}
+      `)}</figure>`;
+    }
+    if (item.id === "argument") {
+      const stamp = (x, tone, n, name, detail, icon) => `<g class="${tone}" transform="translate(${x} 62)">
+        <text class="soft" text-anchor="middle" y="-36" font-size="11" letter-spacing="1.1">${n}</text>
+        <circle class="disc" r="22"/>
+        ${icon}
+        <text class="serif" text-anchor="middle" y="44" font-size="15">${esc(name)}</text>
+        <text class="soft" text-anchor="middle" y="62" font-size="11">${esc(detail)}</text>
+      </g>`;
+      return `<figure class="workshop-plate">${plateSvg("argument", "0 0 440 186", plateText("argument", "title", "Who still walks. The safer-road claim, one question from a peer, and a revision."), `
+        ${stamp(74, "philosophy", "01", plateText("argument", "s1", "Safer road"), plateText("argument", "d1", "Your claim"), iconClaim)}
+        ${stamp(220, "philosophy", "02", plateText("argument", "s2", "Who walks"), plateText("argument", "d2", "A peer"), iconQuestion)}
+        ${stamp(366, "english", "03", plateText("argument", "s3", "Revision"), plateText("argument", "d3", "The new page"), iconRevision)}
+        ${caption(plateText("argument", "caption", "The revision answers the question."), 172)}
+      `)}</figure>`;
+    }
+    return "";
+  }
+
   function renderWorkshops() {
-    const cards = A.workshops.map((item) => {
+    const cards = A.workshops.map((row) => {
+      const item = workshop(row.id);
       const enrolled = A.students.filter((personRecord) => personRecord.workshops[item.id] === "enrolled");
       const done = A.students.filter((personRecord) => personRecord.workshops[item.id] === "done");
-      const now = enrolled.length ? enrolled.map((personRecord) => personRecord.name).join(", ") : "no one";
+      const now = enrolled.length ? enrolled.map((personRecord) => personRecord.name).join(", ") : t("workshops.noOne");
       const claims = item.elicits.length
-        ? item.elicits.map((id) => competency(id).name).join(", ")
-        : "No claims. Notes stay notes.";
+        ? t("workshops.canMark", { names: item.elicits.map((id) => competency(id).name).join(", ") })
+        : t("workshops.noMark");
       const viewer = current();
-      return `<article class="card" id="workshop-${item.id}">
-        <p class="eyebrow">${esc(item.kind)}${item.scored ? " · scored" : " · unscored"}</p>
+      const place = workshopStatusLabel(viewer.workshops[item.id]).toLowerCase();
+      return `<article class="card workshop-card" id="workshop-${item.id}">
+        ${workshopPlate(item)}
+        <div class="workshop-copy">
+        <p class="eyebrow">${esc(item.kind)}${item.scored ? " · " + t("scored") : " · " + t("unscored")}</p>
         <h3>${esc(item.name)}</h3>
         <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b></p>
         ${offerSkillCloud(item, viewer, "workshop")}
-        <p class="meta">${esc(firstName(viewer))}, sequence: ${esc(workshopStatusLabel(viewer.workshops[item.id]).toLowerCase())}.</p>
+        <p class="meta">${esc(t("workshops.forPerson", { name: firstName(viewer), place }))}</p>
         <p>${esc(item.detail)}</p>
         ${activityList(item.activities)}
-        <p class="meta">Can elicit: ${esc(claims)}</p>
-        <p class="meta">In it now: ${esc(now)}. Completed by ${done.length}.</p>
-        <p class="eyebrow">Sittings</p>
+        <p class="meta">${esc(claims)}</p>
+        <p class="meta">${esc(t("workshops.inItNow", { now, done: done.length }))}</p>
+        <p class="eyebrow">${esc(t("sittings"))}</p>
         ${sittingSection("workshop", item.id)}
+        </div>
       </article>`;
     }).join("");
     const intake = A.students.filter((personRecord) => workshopPhase(personRecord) !== "done");
     const lines = intake.map((personRecord) => {
       const steps = A.workshops.map((item) => {
         const status = personRecord.workshops[item.id];
-        const word = status === "done" ? "done" : status === "enrolled" ? "in progress" : "not started";
+        const word = status === "done" ? t("workshops.wordDone") : status === "enrolled" ? t("workshops.wordProgress") : t("workshops.wordTodo");
         return `${item.name} (${word})`;
       }).join("; ");
       return `<li><a href="#panel" data-action="open-student" data-id="${personRecord.id}">${esc(personRecord.name)}</a> — ${esc(steps)}</li>`;
     }).join("");
     return `<article class="page" data-page="workshops">
       <header class="page-head">
-        <p class="eyebrow">Workshops</p>
-        <h2>Workshops you can join.</h2>
-        <p class="lede">Each card is a workshop and the days it meets. Register from a student account to hold a place. When a workshop is scored, the mark comes from the work. New students often move through the sampler, the diagnostic, a medium trial, and the argument workshop. A workshop is waived when the evidence is already on the record.</p>
+        <p class="eyebrow">${esc(t("nav.workshops"))}</p>
+        <h2>${esc(t("workshops.h2"))}</h2>
+        <p class="lede">${esc(t("workshops.lede"))}</p>
       </header>
       ${planNoticeHTML()}
       <div class="grid-2">${cards}</div>
-      ${state.role === "student" ? "" : `<h3 class="section-title">Who is still in the sequence</h3>
-      ${lines ? `<ul>${lines}</ul>` : `<p>Everyone in the cohort has finished the workshop sequence.</p>`}`}
+      ${state.role === "student" ? "" : `<h3 class="section-title">${esc(t("workshops.stillIn"))}</h3>
+      ${lines ? `<ul>${lines}</ul>` : `<p>${esc(t("workshops.allDone"))}</p>`}`}
     </article>`;
   }
 
@@ -2300,11 +2544,12 @@ function levelLabel(n) {
   }
 
   function allMaterials() {
-    return A.materials.concat(state.contributions || []);
+    return A.materials.map((item) => localize("materials", item)).concat(state.contributions || []);
   }
 
   function materialById(id) {
-    return allMaterials().find((item) => item.id === id) || null;
+    const item = allMaterials().find((row) => row.id === id) || null;
+    return localize("materials", item);
   }
 
   function contributorStudentId(item) {
@@ -2369,8 +2614,13 @@ function levelLabel(n) {
 
   function joinNames(names) {
     if (names.length <= 1) return names.join("");
-    if (names.length === 2) return `${names[0]} and ${names[1]}`;
-    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+    const conj = t("and");
+    if (state.lang === "fr") {
+      if (names.length === 2) return `${names[0]} ${conj} ${names[1]}`;
+      return `${names.slice(0, -1).join(", ")} ${conj} ${names[names.length - 1]}`;
+    }
+    if (names.length === 2) return `${names[0]} ${conj} ${names[1]}`;
+    return `${names.slice(0, -1).join(", ")}, ${conj} ${names[names.length - 1]}`;
   }
 
   function broughtBy(item) {
@@ -2624,7 +2874,8 @@ function levelLabel(n) {
     const skillId = state.skill !== "all" && competency(state.skill) ? state.skill : "";
     const fieldId = state.field;
     const rows = [];
-    for (const item of A.workshops) {
+    for (const raw of A.workshops) {
+      const item = workshop(raw.id);
       if (!activityTouches(item.elicits, skillId, fieldId)) continue;
       const seat = personRecord.workshops[item.id];
       const phase = seat === "done" ? "closed" : seat === "enrolled" ? "soon" : "todo";
@@ -2641,9 +2892,9 @@ function levelLabel(n) {
       }
       rows.push({
         phase,
-        kind: "Workshop",
+        kind: t("kind.workshop"),
         name: item.name,
-        href: "#workshops",
+        href: `#workshops/${item.id}`,
         summary: item.summary,
         skills: shownSkills(item.elicits, skillId),
         points: offerPhrase(item.elicits),
@@ -2652,7 +2903,8 @@ function levelLabel(n) {
         detail,
       });
     }
-    for (const item of A.projects) {
+    for (const raw of A.projects) {
+      const item = project(raw.id);
       if (!activityTouches(item.elicits, skillId, fieldId)) continue;
       const seated = personRecord.projectIds.includes(item.id);
       const recommended = personRecord.recommendedProjectId === item.id;
@@ -2671,7 +2923,7 @@ function levelLabel(n) {
       }
       rows.push({
         phase,
-        kind: "Project",
+        kind: t("kind.project"),
         name: item.name,
         href: `#projects/${item.id}`,
         summary: item.summary,
@@ -2717,8 +2969,8 @@ function levelLabel(n) {
         ${cards || `<p class="empty">Nothing ${label.toLowerCase()} for this filter.</p>`}
       </section>`;
     }).join("");
-    const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>All fields</option>`]
-      .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
+    const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>${esc(t("activities.allFields"))}</option>`]
+      .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(field(item.id).name)}</option>`))
       .join("");
     const skillPool = state.field === "all"
       ? A.competencies
@@ -2755,9 +3007,9 @@ function levelLabel(n) {
     const todo = rows.filter((row) => row.phase === "todo").length;
     return `<article class="page" data-page="activities" data-student="${personRecord.id}">
       <header class="page-head">
-        <p class="eyebrow">Activities · ${esc(personRecord.name)}</p>
-        <h2>What is closed, soon, and still to do.</h2>
-        <p class="lede">Workshops, tests, and project work that can move ${esc(focusName)}, each with the points it can place. A recorded mark is worth 1, 2, 3, or 4 points, matching the stage. A closed activity already has its work on the record. Soon is the seat in progress or the one recommended next. Materials underneath are worth 0 points. <a href="#plan">The plan</a> lists the day and the room, and the lectures. A lecture is worth 0 points.</p>
+        <p class="eyebrow">${esc(t("title.activities"))} · ${esc(personRecord.name)}</p>
+        <h2>${esc(t("activities.h2"))}</h2>
+        <p class="lede">${t("activities.lede", { focus: esc(focusName), plan: `<a href="#plan">${esc(t("activities.plan"))}</a>` })}</p>
       </header>
       <div class="filters">
         <label>Field
@@ -2780,8 +3032,8 @@ function levelLabel(n) {
   }
 
   function renderLibrary() {
-    const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>All fields</option>`]
-      .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(item.name)}</option>`))
+    const fieldOptions = [`<option value="all"${state.field === "all" ? " selected" : ""}>${esc(t("activities.allFields"))}</option>`]
+      .concat(A.fields.map((item) => `<option value="${item.id}"${state.field === item.id ? " selected" : ""}>${esc(field(item.id).name)}</option>`))
       .join("");
     const mediumOptions = [`<option value="all"${state.medium === "all" ? " selected" : ""}>All kinds</option>`]
       .concat(A.media.map((item) => `<option value="${item.id}"${state.medium === item.id ? " selected" : ""}>${esc(item.label)}</option>`))
@@ -2849,6 +3101,7 @@ function levelLabel(n) {
       const marks = evidenceFor(personRecord.id).length;
       return `<tr data-action="open-student" data-id="${personRecord.id}" data-student="${personRecord.id}">
         <td><button type="button" class="name-btn" data-action="open-student" data-id="${personRecord.id}">${esc(personRecord.name)}</button><br><span class="meta">${esc(person(personRecord.mentorId).name.replace(/^Dr\. |^Prof\. /, ""))}</span></td>
+        <td>${esc(agePhrase(personRecord))}</td>
         <td><span class="pips">${pips}</span></td>
         <td>${marks}</td>
         <td>${esc(lastText)}</td>
@@ -2866,6 +3119,7 @@ function levelLabel(n) {
         <h2>The cohort, one row at a time.</h2>
         <p class="lede">The four marks are algebra, writing, mechanics, and ethics, drawn as far as each skill has come. A dashed mark has no evidence yet. The map shows every skill, the links between fields, and the dots each project added. Mentoring load is the constraint that used to be class size.</p>
       </header>
+      ${ageChartHTML(A.students.map((item) => item.id))}
       <div class="stat-row">
         <div class="stat"><b>${A.students.length}</b><span>students</span></div>
         <div class="stat"><b>${moving}</b><span>with marks on a skill line</span></div>
@@ -2877,6 +3131,7 @@ function levelLabel(n) {
           <thead>
             <tr>
               <th scope="col">Student</th>
+              <th scope="col">Age</th>
               <th scope="col">Shared subjects</th>
               <th scope="col">Pieces of work</th>
               <th scope="col">Latest evidence</th>
@@ -2888,6 +3143,7 @@ function levelLabel(n) {
       </div>
       <h3 class="section-title">Caseload</h3>
       <div class="grid-3">${loads}</div>
+      ${assistantDock()}
     </article>`;
   }
 
@@ -2974,19 +3230,147 @@ function levelLabel(n) {
     return A.competencies.reduce((sum, claim) => sum + (levelOf(personRecord.id, claim.id) || 0), 0);
   }
 
+  function floorPoints(personRecord) {
+    return A.floorIds.reduce((sum, id) => sum + (levelOf(personRecord.id, id) || 0), 0);
+  }
+
+  function ageExact(personRecord, onIso) {
+    const born = personRecord && personRecord.born;
+    if (!born || !/^\d{4}-\d{2}-\d{2}$/.test(born)) return 0;
+    const [by, bm, bd] = born.split("-").map(Number);
+    const [y, m, d] = (onIso || A.today).split("-").map(Number);
+    const months = (y - by) * 12 + (m - bm) + (d - bd) / 30.4375;
+    return Math.max(0, months / 12);
+  }
+
+  function ageWhole(personRecord) {
+    return Math.floor(ageExact(personRecord) + 1e-9);
+  }
+
+  function agePhrase(personRecord) {
+    return t("age.years", { n: ageWhole(personRecord) });
+  }
+
+  function mentorTone(mentorId) {
+    if (mentorId === "ibarra") return "physics";
+    if (mentorId === "vogel") return "mathematics";
+    return "philosophy";
+  }
+
+  function ageChartRows() {
+    return A.students.map((personRecord) => ({
+      id: personRecord.id,
+      name: personRecord.name,
+      short: firstName(personRecord),
+      mentorId: personRecord.mentorId,
+      age: ageExact(personRecord),
+      years: ageWhole(personRecord),
+      points: linePoints(personRecord),
+      floor: floorPoints(personRecord),
+    }));
+  }
+
+  function ageChartHTML(caseloadIds) {
+    const mine = new Set(caseloadIds && caseloadIds.length ? caseloadIds : A.students.map((item) => item.id));
+    const allMine = mine.size === A.students.length;
+    const rows = ageChartRows().slice().sort((a, b) => a.age - b.age || a.name.localeCompare(b.name));
+    const width = 680;
+    const height = 268;
+    const padL = 46;
+    const padR = 72;
+    const padT = 22;
+    const padB = 40;
+    const ageMin = 13;
+    const ageMax = 18.5;
+    const yMax = 16;
+    const xAt = (age) => padL + ((age - ageMin) / (ageMax - ageMin)) * (width - padL - padR);
+    const yAt = (points) => padT + (1 - points / yMax) * (height - padT - padB);
+    const ticksX = [13, 14, 15, 16, 17, 18];
+    const ticksY = [];
+    for (let n = 0; n <= yMax; n += 4) ticksY.push(n);
+    const gridX = ticksX.map((age) => {
+      const x = xAt(age).toFixed(1);
+      return `<line class="chart-grid" x1="${x}" y1="${padT}" x2="${x}" y2="${height - padB}"></line>
+        <text class="age-tick" x="${x}" y="${height - padB + 16}" text-anchor="middle">${age}</text>`;
+    }).join("");
+    const gridY = ticksY.map((points) => {
+      const y = yAt(points).toFixed(1);
+      const guide = points === 12;
+      return `<line class="${guide ? "age-guide" : "chart-grid"}" x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}"></line>
+        <text class="age-tick" x="${padL - 8}" y="${Number(y) + 4}" text-anchor="end">${points}</text>`;
+    }).join("");
+    const guideY = yAt(12);
+    const dots = rows.map((row, index) => {
+      const x = xAt(row.age);
+      const y = yAt(row.floor);
+      const on = mine.has(row.id);
+      let lift = index % 2 === 0 ? -15 : 20;
+      if (Math.abs((y + lift) - yAt(12)) < 11) lift = lift < 0 ? 20 : -16;
+      const label = t("age.open", { name: row.name });
+      return `<g class="age-dot field-${mentorTone(row.mentorId)}${on ? " is-mine" : " is-ghost"}" data-action="open-student" data-id="${esc(row.id)}" tabindex="0" role="button" aria-label="${esc(label)}">
+        <circle class="hit" data-action="open-student" data-id="${esc(row.id)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="16"></circle>
+        <circle class="mark" data-action="open-student" data-id="${esc(row.id)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${on ? 7 : 5.2}"></circle>
+        <text class="age-name" x="${x.toFixed(1)}" y="${(y + lift).toFixed(1)}" text-anchor="middle">${esc(row.short)}</text>
+      </g>`;
+    }).join("");
+    const list = rows.map((row) => {
+      const personRecord = student(row.id);
+      const pips = A.floorIds.map((id) => pip(levelOf(row.id, id), competency(id).field, `${competency(id).name}: ${levelLabel(levelOf(row.id, id))}`)).join("");
+      const on = mine.has(row.id);
+      return `<li class="${on ? "is-mine" : "is-ghost"}">
+        <button type="button" data-action="open-student" data-id="${esc(row.id)}">
+          <b>${esc(row.short)}</b>
+          <span class="meta">${esc(agePhrase(personRecord))}</span>
+          <span class="pips" aria-label="${esc(t("age.shared"))}">${pips}</span>
+          <span class="age-pts"><strong>${row.points}</strong> <span>${esc(t("age.allPoints"))}</span></span>
+        </button>
+      </li>`;
+    }).join("");
+    const lede = allMine ? t("age.ledeDirector") : t("age.ledeMentor");
+    const legend = allMine
+      ? `<p class="legend">${["ibarra", "adeyemi", "vogel"].map((id) => `<span class="field-${mentorTone(id)}"><i></i>${esc(person(id).name.replace(/^Dr\. |^Prof\. /, ""))}</span>`).join("")}</p>`
+      : `<p class="legend"><span class="age-key-mine"><i></i>${esc(t("age.legendCaseload"))}</span><span class="age-key-ghost"><i></i>${esc(t("age.legendCohort"))}</span></p>`;
+    const high = rows.slice().sort((a, b) => b.floor - a.floor || b.points - a.points || a.age - b.age)[0];
+    const young = rows[0];
+    const reading = t("age.reading", {
+      name: high.short,
+      age: agePhrase(student(high.id)),
+      points: pointsLabel(high.points),
+      floor: high.floor,
+      mentor: person(high.mentorId).name,
+    });
+    return `<section class="age-chart" aria-labelledby="age-chart-title">
+      <h3 id="age-chart-title">${esc(t("age.chartTitle"))}</h3>
+      <p class="muted">${esc(lede)}</p>
+      ${legend}
+      <div class="chart-scroll">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(t("age.chartTitle"))}">
+          ${gridX}
+          ${gridY}
+          <text class="age-guide-label" x="${padL + 6}" y="${guideY - 7}" text-anchor="start">${esc(t("age.sharedGuide"))}</text>
+          <text class="age-axis" x="${(padL + width - padR) / 2}" y="${height - 6}" text-anchor="middle">${esc(t("age.younger"))} → ${esc(t("age.older"))}</text>
+          <text class="age-axis" transform="translate(14 ${(padT + height - padB) / 2}) rotate(-90)" text-anchor="middle">${esc(t("age.pointsAxis"))}</text>
+          ${dots}
+        </svg>
+      </div>
+      <p class="cloud-read">${esc(reading)} ${esc(t("age.listCaption"))}: ${esc(young.short)} (${esc(agePhrase(student(young.id)))}).</p>
+      <ol class="age-strip">${list}</ol>
+    </section>`;
+  }
+
   function fieldBundle(fieldId) {
-    const skills = A.competencies.filter((claim) => claim.field === fieldId);
+    const skills = A.competencies.filter((claim) => claim.field === fieldId).map((claim) => competency(claim.id));
     const materials = allMaterials().filter((item) => materialFields(item).includes(fieldId));
-    const workshops = A.workshops.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId));
-    const projects = A.projects.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId));
+    const workshops = A.workshops.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId)).map((item) => workshop(item.id));
+    const projects = A.projects.filter((item) => item.elicits.some((id) => competency(id) && competency(id).field === fieldId)).map((item) => project(item.id));
     return { skills, materials, workshops, projects };
   }
 
   function placesOpen(item) {
     const left = item.capacity - rosterOf(item).length;
-    if (left <= 0) return "Full";
-    if (left === 1) return "1 place open";
-    return `${left} places open`;
+    if (left <= 0) return t("full");
+    if (left === 1) return t("place.openOne");
+    return t("place.openMany", { n: left });
   }
 
   function openSittings(kind) {
@@ -3036,7 +3420,7 @@ function levelLabel(n) {
   function skillCloud(personRecord) {
     syncCloudStudent(personRecord.id);
     const title = state.role === "student" ? "Your skills" : `${firstName(personRecord)}’s skills`;
-    const legend = `<p class="legend">${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(item.short)}</span>`).join("")}<span class="cloud-empty-key"><i></i>No evidence yet</span></p>`;
+    const legend = `<p class="legend">${A.fields.map((item) => `<span class="field-${item.id}"><i></i>${esc(field(item.id).short)}</span>`).join("")}<span class="cloud-empty-key"><i></i>${esc(t("level.unobserved"))}</span></p>`;
     const tools = `<div class="cloud-tools">
       <button type="button" data-action="cloud-zoom" data-dir="out"${cloudZoom === 1 ? " disabled" : ""}>Zoom out</button>
       <button type="button" data-action="cloud-zoom" data-dir="in"${cloudZoom === 2 ? " disabled" : ""}>Zoom in</button>
@@ -3410,13 +3794,104 @@ function levelLabel(n) {
     </article>`;
   }
 
+  function assistantUsesCaseload() {
+    return state.role === "mentor" || state.role === "director";
+  }
+
+  function assistantAllowed() {
+    if (state.role === "student") return state.route === "dashboard";
+    if (assistantUsesCaseload()) return state.route === "dashboard" || state.route === "cohort";
+    return false;
+  }
+
+  function assistantScope() {
+    if (state.role === "mentor") return "caseload:" + state.mentorId;
+    if (state.role === "director") return "caseload:director";
+    return current().id;
+  }
+
+  function caseloadPeople() {
+    if (state.role === "mentor") return A.students.filter((item) => item.mentorId === state.mentorId);
+    if (state.role === "director") return A.students.slice();
+    return [];
+  }
+
+  function coachingWhy(personRecord) {
+    const name = firstName(personRecord);
+    const flag = attention(personRecord);
+    if (flag.id === "challenge") return t("coach.why.challenge", { name });
+    if (flag.id === "stale") {
+      const last = lastEvidenceItem(personRecord.id);
+      return t("coach.why.stale", { name, date: last ? formatDate(last.date) : "", days: last ? daysSince(last.date) : "" });
+    }
+    if (flag.id === "intake") return t("coach.why.intake", { name });
+    if (flag.id === "workshops") {
+      const list = Object.entries(personRecord.workshops || {})
+        .filter(([, status]) => status !== "done")
+        .map(([id]) => workshop(id) && workshop(id).name)
+        .filter(Boolean)
+        .join(", ");
+      return t("coach.why.workshops", { name, list });
+    }
+    const short = A.floorIds
+      .filter((id) => (levelOf(personRecord.id, id) ?? 0) < A.gate)
+      .map((id) => `${competency(id).name} ${levelLabel(levelOf(personRecord.id, id)).toLowerCase()}`);
+    if (short.length) return t("coach.why.floor", { name, list: short.join("; ") });
+    return t("coach.why.steady", { name, flag: flag.label.toLowerCase() });
+  }
+
+  function caseloadSnapshot(people) {
+    const rows = (people || caseloadPeople()).slice().sort((a, b) => {
+      const diff = (COACH_RANK[attention(a).id] ?? 8) - (COACH_RANK[attention(b).id] ?? 8);
+      if (diff) return diff;
+      return (floorPoints(a) - floorPoints(b)) || a.name.localeCompare(b.name);
+    });
+    const students = rows.map((personRecord) => {
+      const last = lastEvidenceItem(personRecord.id);
+      const flag = attention(personRecord);
+      const recommended = personRecord.recommendedProjectId && project(personRecord.recommendedProjectId);
+      return {
+        name: firstName(personRecord),
+        ageYears: Math.round(ageExact(personRecord) * 10) / 10,
+        attention: flag.label,
+        attentionId: flag.id,
+        sharedPoints: floorPoints(personRecord),
+        totalPoints: linePoints(personRecord),
+        lastEvidence: last ? `${last.title} · ${formatDate(last.date)}` : "",
+        daysSinceEvidence: last ? daysSince(last.date) : null,
+        workshopsOpen: Object.entries(personRecord.workshops || {})
+          .filter(([, status]) => status !== "done")
+          .map(([id]) => workshop(id) && workshop(id).name)
+          .filter(Boolean),
+        projects: (personRecord.projectIds || []).map((id) => project(id) && project(id).name).filter(Boolean),
+        recommendedProject: recommended ? recommended.name : "",
+        scaffold: personRecord.scaffold || "",
+        sharedShort: A.floorIds
+          .filter((id) => (levelOf(personRecord.id, id) ?? 0) < A.gate)
+          .map((id) => `${competency(id).name} ${levelLabel(levelOf(personRecord.id, id)).toLowerCase()}`),
+        nextSitting: nextSittingLine(personRecord),
+        why: coachingWhy(personRecord),
+      };
+    });
+    return {
+      lang: state.lang === "fr" ? "fr" : "en",
+      today: A.today,
+      role: state.role === "director" ? "director" : "mentor",
+      viewer: state.role === "director" ? person("ortega").name : person(state.mentorId).name,
+      students,
+      toCoach: students
+        .filter((row) => row.attentionId !== "ready" && row.attentionId !== "endorsed")
+        .map((row) => ({ name: row.name, why: row.why, attentionId: row.attentionId })),
+    };
+  }
+
   function assistantMood(studentId) {
     const saved = state.moods && state.moods[studentId];
     return ASSISTANT_MOODS.some((item) => item.id === saved) ? saved : "steady";
   }
 
-  function assistantThread(studentId) {
-    const rows = state.assistant && state.assistant[studentId];
+  function assistantThread(scope) {
+    const rows = state.assistant && state.assistant[scope];
     if (!Array.isArray(rows)) return [];
     return rows.filter((row) => row && (row.role === "user" || row.role === "assistant" || row.role === "note") && typeof row.text === "string");
   }
@@ -3435,10 +3910,10 @@ function levelLabel(n) {
   }
 
   function skillWhy(row) {
-    if (row.floor && row.level < A.gate) return "Shared subject still short of proficient.";
-    if (row.level < 0) return "No evidence yet. That is not 0 points.";
-    if (row.level < A.gate) return "Started, and still short of proficient.";
-    return "Room left before advanced.";
+    if (row.floor && row.level < A.gate) return t("why.floorShort");
+    if (row.level < 0) return t("why.noEvidence");
+    if (row.level < A.gate) return t("why.startedShort");
+    return t("why.roomLeft");
   }
 
   function sittingForSkill(personRecord, skillId) {
@@ -3450,7 +3925,7 @@ function levelLabel(n) {
       return !!(parent && Array.isArray(parent.elicits) && parent.elicits.includes(skillId));
     };
     const mine = rows.find((item) => elicits(item) && rosterOf(item).includes(personRecord.id));
-    const openSeat = rows.find((item) => elicits(item) && !rosterOf(item).includes(personRecord.id) && placesOpen(item) !== "Full");
+    const openSeat = rows.find((item) => elicits(item) && !rosterOf(item).includes(personRecord.id) && rosterOf(item).length < item.capacity);
     const pick = mine || openSeat;
     return pick ? `${sessionTitle(pick)} on ${formatDate(pick.date)}` : "";
   }
@@ -3560,6 +4035,7 @@ function levelLabel(n) {
     }
     const recommended = personRecord.recommendedProjectId && project(personRecord.recommendedProjectId);
     return {
+      lang: state.lang === "fr" ? "fr" : "en",
       name: firstName(personRecord),
       today: A.today,
       projects: (personRecord.projectIds || []).map((id) => project(id) && project(id).name).filter(Boolean),
@@ -3585,41 +4061,42 @@ function levelLabel(n) {
     if (draftBox) assistantDraft = draftBox.value;
   }
 
-  function pushAssistant(studentId, row) {
-    const next = assistantThread(studentId).concat([row]).slice(-12);
-    state.assistant[studentId] = next;
+  function pushAssistant(scope, row) {
+    const next = assistantThread(scope).concat([row]).slice(-12);
+    state.assistant[scope] = next;
   }
 
   function askAssistant(text) {
-    if (state.role !== "student" || assistantBusy) return;
+    if (!assistantAllowed() || assistantBusy) return;
     const question = String(text || "").trim().slice(0, 600);
     if (!question) {
-      assistantNotice = "Write a question, or pick one of the three above.";
+      assistantNotice = t(assistantUsesCaseload() ? "coach.empty" : "assistant.empty");
       const status = document.getElementById("assistant-status");
       if (status) status.textContent = assistantNotice;
       const input = document.getElementById("assistant-q");
       if (input) input.focus();
       return;
     }
-    const personRecord = current();
+    const scope = assistantScope();
+    const caseload = assistantUsesCaseload();
     normalizeAssistantState();
-    pushAssistant(personRecord.id, { role: "user", text: question });
+    pushAssistant(scope, { role: "user", text: question });
     assistantDraft = "";
     const draftBox = document.getElementById("assistant-q");
     if (draftBox) draftBox.value = "";
     assistantNotice = "";
     assistantBusy = true;
-    assistantBusyFor = personRecord.id;
+    assistantBusyFor = scope;
     const token = ++assistantToken;
-    const studentId = personRecord.id;
     const payload = {
-      mood: assistantMood(studentId),
-      messages: assistantThread(studentId)
+      kind: caseload ? "caseload" : "student",
+      messages: assistantThread(scope)
         .filter((row) => row.role === "user" || row.role === "assistant")
         .slice(-8)
         .map((row) => ({ role: row.role, content: row.text })),
-      snapshot: assistantSnapshot(personRecord),
+      snapshot: caseload ? caseloadSnapshot() : assistantSnapshot(current()),
     };
+    if (!caseload) payload.mood = assistantMood(current().id);
     persist();
     render();
     const log = document.getElementById("assistant-log");
@@ -3641,13 +4118,13 @@ function levelLabel(n) {
       return String(data.reply);
     }).then((reply) => {
       if (token !== assistantToken) return;
-      pushAssistant(studentId, { role: "assistant", text: reply.slice(0, 2000) });
+      pushAssistant(scope, { role: "assistant", text: reply.slice(0, 2000) });
     }).catch((err) => {
       if (token !== assistantToken) return;
       const message = err && err.message === "Failed to fetch"
         ? "The assistant runs with the atelier server. From the project folder, run node server.js and open the address it prints."
         : (err && err.message) || "The assistant could not answer just now.";
-      pushAssistant(studentId, { role: "note", text: message });
+      pushAssistant(scope, { role: "note", text: message });
     }).finally(() => {
       if (token !== assistantToken) return;
       assistantBusy = false;
@@ -3663,15 +4140,15 @@ function levelLabel(n) {
   }
 
   function clearAssistant() {
-    if (state.role !== "student") return;
-    const studentId = current().id;
+    if (!assistantAllowed()) return;
+    const scope = assistantScope();
     normalizeAssistantState();
-    state.assistant[studentId] = [];
+    state.assistant[scope] = [];
     assistantDraft = "";
     const draftBox = document.getElementById("assistant-q");
     if (draftBox) draftBox.value = "";
-    assistantNotice = "The conversation is cleared. Your mood stays.";
-    if (assistantBusyFor === studentId) {
+    assistantNotice = t(assistantUsesCaseload() ? "coach.cleared" : "assistant.cleared");
+    if (assistantBusyFor === scope) {
       assistantBusy = false;
       assistantBusyFor = "";
       assistantToken += 1;
@@ -3707,62 +4184,69 @@ function levelLabel(n) {
     </svg>`;
   }
 
-  function assistantPanel(personRecord) {
-    const mood = assistantMood(personRecord.id);
-    const moods = ASSISTANT_MOODS.map((item) =>
-      `<button type="button" data-action="assistant-mood" data-id="${item.id}" aria-pressed="${item.id === mood}">${item.label}</button>`
-    ).join("");
-    const waiting = assistantBusy && assistantBusyFor === personRecord.id;
-    const prompts = ASSISTANT_PROMPTS.map((item) =>
-      `<button type="button" data-action="assistant-ask" data-id="${item.id}"${waiting ? " disabled" : ""}>${esc(item.label)}</button>`
-    ).join("");
-    const rows = assistantThread(personRecord.id);
+  function assistantPanel() {
+    const caseload = assistantUsesCaseload();
+    const scope = assistantScope();
+    const waiting = assistantBusy && assistantBusyFor === scope;
+    const prompts = (caseload ? CASELOAD_PROMPTS : ASSISTANT_PROMPTS).map((item) => {
+      const label = t((caseload ? "coach.prompt." : "prompt.") + item.id);
+      return `<button type="button" data-action="assistant-ask" data-id="${item.id}"${waiting ? " disabled" : ""}>${esc(label)}</button>`;
+    }).join("");
+    let moods = "";
+    if (!caseload) {
+      const mood = assistantMood(current().id);
+      moods = `<p class="eyebrow" id="mood-label">${esc(t("assistant.mood"))}</p>
+        <div class="moods" role="group" aria-labelledby="mood-label">${ASSISTANT_MOODS.map((item) =>
+          `<button type="button" data-action="assistant-mood" data-id="${item.id}" aria-pressed="${item.id === mood}">${esc(t("mood." + item.id))}</button>`
+        ).join("")}</div>`;
+    }
+    const rows = assistantThread(scope);
     let log = "";
     if (!rows.length && !waiting) {
-      log = `<p class="empty">Set how you feel, then ask about the week. The reply stays in this browser.</p>`;
+      log = `<p class="empty">${esc(t(caseload ? "coach.empty" : "assistant.logEmpty"))}</p>`;
     } else {
       log = rows.map((row) => {
         const kind = row.role === "user" ? "you" : row.role === "note" ? "note" : "atelier";
-        const label = row.role === "user" ? "You" : "Atelier";
-        return `<p class="assistant-turn" data-who="${kind}"><b>${label}</b>${esc(row.text)}</p>`;
+        const label = row.role === "user" ? t("assistant.you") : t("assistant.atelier");
+        return `<p class="assistant-turn" data-who="${kind}"><b>${esc(label)}</b>${esc(row.text)}</p>`;
       }).join("");
-      if (waiting) log += `<p class="assistant-wait">Looking at your week and your mood.</p>`;
+      if (waiting) log += `<p class="assistant-wait">${esc(t(caseload ? "coach.looking" : "assistant.wait"))}</p>`;
     }
     const status = waiting ? "" : assistantNotice;
+    const title = t(caseload ? "coach.title" : "assistant.title");
     return `<section class="assistant" id="assistant" role="dialog" aria-labelledby="assistant-title" tabindex="-1"${assistantOpen ? "" : " hidden"}>
       <div class="assistant-top">
         <div>
-          <p class="eyebrow">Atelier assistant</p>
-          <h3 id="assistant-title">A word before you start</h3>
+          <p class="eyebrow">${esc(title)}</p>
+          <h3 id="assistant-title">${esc(title)}</h3>
         </div>
-        <button type="button" class="assistant-close" data-action="assistant-close">Close</button>
+        <button type="button" class="assistant-close" data-action="assistant-close">${esc(t("assistant.close"))}</button>
       </div>
       <div class="assistant-scroll">
-        <p>Ask about a coming sitting, a task, or which skills to work on from where you are now. Every reply follows the mood that is pressed. A task is practice. It does not place a mark.</p>
-        <p class="eyebrow" id="mood-label">How you feel</p>
-        <div class="moods" role="group" aria-labelledby="mood-label">${moods}</div>
+        <p>${esc(t(caseload ? "coach.intro" : "assistant.intro"))}</p>
+        ${moods}
         <div class="assistant-prompts">${prompts}</div>
-        <p class="muted">Steady keeps to one sitting and up to two skills. Curious can go a step further. Tired and stuck stay with one skill. Overwhelmed names the next sitting and leaves the rest.</p>
+        <p class="muted">${esc(t(caseload ? "coach.hint" : "assistant.hint"))}</p>
         <div class="assistant-log" id="assistant-log" aria-live="polite">${log}</div>
       </div>
       <form class="stack-form" data-form="assistant">
-        <label for="assistant-q">Ask about a sitting, a task, or a skill</label>
+        <label for="assistant-q">${esc(t(caseload ? "coach.ask" : "assistant.ask"))}</label>
         <textarea id="assistant-q" name="q" maxlength="600">${esc(assistantDraft)}</textarea>
         <div class="action-row">
-          <button type="submit" class="primary"${waiting ? " disabled" : ""}>${waiting ? "Looking…" : "Send"}</button>
-          <button type="button" class="quiet" data-action="assistant-clear">Clear the conversation</button>
+          <button type="submit" class="primary"${waiting ? " disabled" : ""}>${waiting ? esc(t("assistant.looking")) : esc(t("assistant.send"))}</button>
+          <button type="button" class="quiet" data-action="assistant-clear">${esc(t("assistant.clear"))}</button>
         </div>
       </form>
       <p id="assistant-status" class="muted" role="status">${esc(status)}</p>
     </section>`;
   }
 
-  function assistantDock(personRecord) {
-    const openLabel = assistantOpen ? "Close the atelier assistant" : "Open the atelier assistant";
+  function assistantDock() {
+    const openLabel = assistantOpen ? t("assistant.close") : t("assistant.open");
     return `<div class="assistant-dock">
-      ${assistantPanel(personRecord)}
+      ${assistantPanel()}
       <button type="button" class="assistant-head" data-action="assistant-toggle" aria-expanded="${assistantOpen ? "true" : "false"}" aria-controls="assistant" aria-haspopup="dialog" aria-label="${openLabel}">
-        ${assistantOpen ? "" : `<span class="assistant-psst" aria-hidden="true">Psst</span>`}
+        ${assistantOpen ? "" : `<span class="assistant-psst" aria-hidden="true">${esc(t("assistant.psst"))}</span>`}
         ${assistantHeadSVG()}
       </button>
     </div>`;
@@ -3771,40 +4255,40 @@ function levelLabel(n) {
   function studentDashInner(personRecord, options = {}) {
     const workshops = openSittings("workshop").map(offerCard).join("");
     const projects = openSittings("project").map(offerCard).join("");
-    const recordLabel = state.role === "student" ? "Your record" : `${firstName(personRecord)}’s record`;
-    const planTitle = state.role === "student" ? "Your agenda" : `${firstName(personRecord)}’s agenda`;
+    const recordLabel = state.role === "student" ? t("dash.yourRecord") : t("dash.theirRecord", { name: firstName(personRecord) });
+    const planTitle = state.role === "student" ? t("dash.yourAgenda") : t("dash.theirAgenda", { name: firstName(personRecord) });
     const planLede = state.role === "student"
-      ? "Coming sittings where you already have a place."
-      : `Coming sittings where ${firstName(personRecord)} already has a place.`;
+      ? t("dash.planLedeYou")
+      : t("dash.planLedeThem", { name: firstName(personRecord) });
     return `<header class="page-head">
-        <p class="eyebrow">${state.role === "student" ? "Start here" : esc(personRecord.name)}</p>
-        <h2>What would you like to learn?</h2>
-        <p class="lede">Open a field, take a place at a workshop, or look at a project that is meeting. Search finds a skill, a material, a lecture, or a sitting by name.</p>
+        <p class="eyebrow">${state.role === "student" ? esc(t("dash.startHere")) : esc(personRecord.name)}</p>
+        <h2>${esc(t("dash.h2"))}</h2>
+        <p class="lede">${esc(t("dash.lede"))}</p>
       </header>
       ${planNoticeHTML()}
-      ${options.assistant ? assistantDock(personRecord) : ""}
+      ${options.assistant ? assistantDock() : ""}
       ${skillCloud(personRecord)}
       <section class="ask" aria-labelledby="learn-title">
-        <h3 class="section-title" id="learn-title">What you can learn</h3>
-        <p class="muted">Four fields. Open one for the skills, the materials to practice, and the work that can place a mark.</p>
-        <div class="learn-grid">${A.fields.map((item) => learnCard(item, personRecord)).join("")}</div>
+        <h3 class="section-title" id="learn-title">${esc(t("dash.learnTitle"))}</h3>
+        <p class="muted">${esc(t("dash.learnMuted"))}</p>
+        <div class="learn-grid">${A.fields.map((item) => learnCard(field(item.id), personRecord)).join("")}</div>
       </section>
       <section class="ask" aria-labelledby="workshops-title">
-        <h3 class="section-title" id="workshops-title">Workshops with a place</h3>
-        <p class="muted">Registering holds your place at that sitting. When a workshop is scored, the mark comes from the work. <a href="#workshops">All workshops</a></p>
-        <div class="offer-list">${workshops || `<p class="empty">No workshop is meeting after ${esc(formatDate(A.today))}.</p>`}</div>
+        <h3 class="section-title" id="workshops-title">${esc(t("dash.workshopsTitle"))}</h3>
+        <p class="muted">${esc(t("dash.workshopsMuted"))} <a href="#workshops">${esc(t("dash.allWorkshops"))}</a></p>
+        <div class="offer-list">${workshops || `<p class="empty">${esc(t("dash.noWorkshop", { date: formatDate(A.today) }))}</p>`}</div>
       </section>
       <section class="ask" aria-labelledby="projects-title">
-        <h3 class="section-title" id="projects-title">Projects you can take up</h3>
-        <p class="muted">Registering holds a place at the sitting. The seat on the project stays as it is, and the score comes from the work products. <a href="#projects">All projects</a></p>
-        <div class="offer-list">${projects || `<p class="empty">No project is meeting after ${esc(formatDate(A.today))}.</p>`}</div>
+        <h3 class="section-title" id="projects-title">${esc(t("dash.projectsTitle"))}</h3>
+        <p class="muted">${esc(t("dash.projectsMuted"))} <a href="#projects">${esc(t("dash.allProjects"))}</a></p>
+        <div class="offer-list">${projects || `<p class="empty">${esc(t("dash.noProject", { date: formatDate(A.today) }))}</p>`}</div>
       </section>
       <section class="ask" aria-labelledby="plan-title">
         <h3 class="section-title" id="plan-title">${esc(planTitle)}</h3>
         <p class="muted">${esc(planLede)}</p>
         ${planGlance(personRecord)}
-        <p><a href="#plan">See every sitting, including lectures</a>. A lecture is worth 0 points.</p>
-        <p class="muted"><a href="#panel">${esc(recordLabel)}</a> has the marks. <a href="#model">How credit works</a>.</p>
+        <p><a href="#plan">${esc(t("dash.seeEvery"))}</a>. ${esc(t("dash.lectureZero"))}</p>
+        <p class="muted">${esc(t("dash.recordHasMarks", { record: recordLabel })).replace(recordLabel, `<a href="#panel">${esc(recordLabel)}</a>`)} <a href="#model">${esc(t("dash.howCredit"))}</a>.</p>
       </section>`;
   }
 
@@ -3816,6 +4300,7 @@ function levelLabel(n) {
     return `<article class="card">
       ${flagHTML(personRecord)}
       <h3>${esc(personRecord.name)}</h3>
+      <p class="meta">${esc(agePhrase(personRecord))} · ${esc(t("age.shared"))} ${floorPoints(personRecord)} / 16</p>
       <p>${esc(situation(personRecord))}</p>
       <p class="meta">${esc(pointsText + lastText)}</p>
       <p class="meta">${esc(nextSittingLine(personRecord))}</p>
@@ -3824,16 +4309,18 @@ function levelLabel(n) {
     </article>`;
   }
 
-  function mentorDashInner(mentorId) {
+  function mentorDashInner(mentorId, options = {}) {
     const mentor = person(mentorId);
     const mentees = A.students.filter((item) => item.mentorId === mentorId);
     const cards = mentees.map(menteeCard).join("");
+    const chart = options.chart === false ? "" : ageChartHTML(mentees.map((item) => item.id));
     return `<section class="dash-block" data-mentor="${esc(mentorId)}">
       <header class="page-head">
         <p class="eyebrow">Mentor dashboard · ${esc(mentor.domain)}</p>
         <h2>${esc(mentor.name)}</h2>
         <p class="lede">${mentees.length === 1 ? "1 student." : `${mentees.length} students.`} Search finds a workshop, a project, or something a student can learn. The questions along the top are the same ones a student starts from.</p>
       </header>
+      ${chart}
       <div class="grid-2">${cards || `<p class="empty">No students on this dashboard.</p>`}</div>
     </section>`;
   }
@@ -3844,19 +4331,21 @@ function levelLabel(n) {
       return `<article class="page" data-page="dashboard" data-student="${personRecord.id}">${studentDashInner(personRecord, { assistant: true })}</article>`;
     }
     if (state.role === "mentor") {
-      return `<article class="page" data-page="dashboard">${mentorDashInner(state.mentorId)}</article>`;
+      return `<article class="page" data-page="dashboard">${mentorDashInner(state.mentorId)}${assistantDock()}</article>`;
     }
-    const mentors = ["ibarra", "adeyemi", "vogel"].map((id) => mentorDashInner(id)).join("");
+    const mentors = ["ibarra", "adeyemi", "vogel"].map((id) => mentorDashInner(id, { chart: false })).join("");
     return `<article class="page" data-page="dashboard">
       <header class="page-head">
         <p class="eyebrow">Director · ${esc(person("ortega").name)}</p>
         <h2>The student dashboard and the mentor dashboards.</h2>
         <p class="lede">This unit opens two dashboards. One belongs to the student. One belongs to the mentor. ${esc(person("ortega").name)} reads both. The student’s page starts from what they can learn, which workshops have a place, and which projects are meeting.</p>
       </header>
+      ${ageChartHTML(A.students.map((item) => item.id))}
       ${studentDashInner(current())}
       <h3 class="section-title">Mentor dashboards</h3>
       ${mentors}
       <p><a href="#cohort">Open the cohort table</a></p>
+      ${assistantDock()}
     </article>`;
   }
 
@@ -3874,7 +4363,7 @@ function levelLabel(n) {
     const fieldId = activeFieldId();
     const item = field(fieldId);
     const bundle = fieldBundle(fieldId);
-    const tabs = A.fields.map((row) => `<a class="field-${row.id}" href="#fields/${row.id}"${row.id === fieldId ? ' aria-current="page"' : ""}>${esc(row.name)}</a>`).join("");
+    const tabs = A.fields.map((row) => `<a class="field-${row.id}" href="#fields/${row.id}"${row.id === fieldId ? ' aria-current="page"' : ""}>${esc(field(row.id).name)}</a>`).join("");
     const skills = bundle.skills.map((claim) => {
       const level = levelOf(personRecord.id, claim.id);
       return `<article class="card field-${item.id}" id="skill-${claim.id}">
@@ -3907,24 +4396,24 @@ function levelLabel(n) {
       <header class="page-head">
         <p class="eyebrow">Fields · ${esc(personRecord.name)}</p>
         <h2>${esc(item.name)}</h2>
-        <p class="lede">${esc(item.blurb)} Levels on this page are ${esc(firstName(personRecord))}’s. Materials are worth 0 points. Workshops and projects list the points they can place.</p>
+        <p class="lede">${esc(item.blurb)} ${esc(t("fields.levelsAre", { name: firstName(personRecord) }))}</p>
       </header>
       <nav class="field-tabs" aria-label="Fields">${tabs}</nav>
       ${skillGraph(personRecord, item)}
       ${fieldChart(personRecord, item)}
       <p><a href="#map">Open the map of every subject</a></p>
-      <h3 class="section-title">Skills</h3>
+      <h3 class="section-title">${esc(t("fields.skills"))}</h3>
       <div class="grid-2">${skills}</div>
-      <h3 class="section-title">Materials</h3>
-      ${materials ? `<ul class="point-mini">${materials}</ul>` : `<p class="muted">No material in this field yet.</p>`}
-      <p><a href="#library" data-action="open-field" data-id="${item.id}" data-route="library">Open the shelf filtered to ${esc(item.name)}</a></p>
-      <h3 class="section-title">Workshops</h3>
-      ${workshops ? `<ul class="point-mini">${workshops}</ul>` : `<p class="muted">No workshop elicits a skill in this field.</p>`}
-      <h3 class="section-title">Projects</h3>
-      ${projects ? `<ul class="point-mini">${projects}</ul>` : `<p class="muted">No project elicits a skill in this field.</p>`}
-      <h3 class="section-title">Lectures</h3>
-      ${lectures ? `<ul class="point-mini">${lectures}</ul>` : `<p class="muted">No lecture in this field is on the plan.</p>`}
-      <p><a href="#plan">Open the plan</a> to register. A lecture is worth 0 points.</p>
+      <h3 class="section-title">${esc(t("fields.materials"))}</h3>
+      ${materials ? `<ul class="point-mini">${materials}</ul>` : `<p class="muted">${esc(t("fields.noMaterial"))}</p>`}
+      <p><a href="#library" data-action="open-field" data-id="${item.id}" data-route="library">${esc(t("fields.openShelf", { name: item.name }))}</a></p>
+      <h3 class="section-title">${esc(t("fields.workshops"))}</h3>
+      ${workshops ? `<ul class="point-mini">${workshops}</ul>` : `<p class="muted">${esc(t("fields.noWorkshop"))}</p>`}
+      <h3 class="section-title">${esc(t("fields.projects"))}</h3>
+      ${projects ? `<ul class="point-mini">${projects}</ul>` : `<p class="muted">${esc(t("fields.noProject"))}</p>`}
+      <h3 class="section-title">${esc(t("fields.lectures"))}</h3>
+      ${lectures ? `<ul class="point-mini">${lectures}</ul>` : `<p class="muted">${esc(t("fields.noLecture"))}</p>`}
+      <p><a href="#plan">${esc(t("fields.openPlan"))}</a>. ${esc(t("dash.lectureZero"))}</p>
     </article>`;
   }
 
@@ -3948,19 +4437,19 @@ function levelLabel(n) {
   function pageTitle() {
     const fieldName = field(activeFieldId());
     const titles = {
-      dashboard: state.role === "mentor" ? "Mentor" : state.role === "director" ? "Dashboards" : "Home",
-      search: state.param.trim() ? `Search: ${state.param.trim().slice(0, 40)}` : "Search",
-      fields: fieldName ? fieldName.name : "Fields",
-      model: "The model",
+      dashboard: state.role === "mentor" ? t("title.mentor") : state.role === "director" ? t("title.dashboards") : t("title.home"),
+      search: state.param.trim() ? t("title.searchFor", { q: state.param.trim().slice(0, 40) }) : t("title.search"),
+      fields: fieldName ? fieldName.name : t("title.fields"),
+      model: t("title.model"),
       panel: current().name,
-      map: "Competency map",
-      projects: state.param && project(state.param) ? project(state.param).name : "Projects",
-      workshops: "Workshops",
-      plan: "Plan",
-      activities: "Activities",
-      library: "Materials",
-      cohort: "Cohort",
-      report: "Report",
+      map: t("title.map"),
+      projects: state.param && project(state.param) ? project(state.param).name : t("title.projects"),
+      workshops: t("title.workshops"),
+      plan: t("title.plan"),
+      activities: t("title.activities"),
+      library: t("title.library"),
+      cohort: t("title.cohort"),
+      report: t("title.report"),
     };
     return titles[state.route] || "Continuum";
   }
@@ -3979,7 +4468,13 @@ function levelLabel(n) {
   }
 
   function normSearch(value) {
-    return String(value || "").toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9'+]+/g, " ").trim();
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[’']/g, "'")
+      .replace(/[^a-z0-9'+]+/g, " ")
+      .trim();
   }
 
   function clipText(value) {
@@ -3997,52 +4492,56 @@ function levelLabel(n) {
 
   function searchCatalog() {
     const rows = [];
-    for (const item of A.fields) {
+    for (const raw of A.fields) {
+      const item = field(raw.id);
       rows.push({
-        kind: "Field",
+        kind: t("search.kind.Field"),
         title: item.name,
         detail: clipText(item.blurb),
         href: "#fields/" + item.id,
-        text: [item.name, item.blurb, "field", "learn"].join(" "),
+        text: [item.name, item.blurb, raw.name, "field", "learn", "domaine"].join(" "),
       });
     }
-    for (const item of A.competencies) {
+    for (const raw of A.competencies) {
+      const item = competency(raw.id);
       const area = field(item.field);
       rows.push({
-        kind: "Skill",
+        kind: t("search.kind.Skill"),
         title: item.name,
         detail: clipText(`${area.name}. ${item.claim}`),
         href: "#fields/" + item.id,
-        text: [item.name, item.short, item.claim, area.name, "skill", "learn"].join(" "),
+        text: [item.name, item.short, item.claim, area.name, raw.name, "skill", "learn", "competence"].join(" "),
       });
       for (const part of item.parts || []) {
         rows.push({
-          kind: "Skill",
+          kind: t("search.kind.Skill"),
           title: part.name,
-          detail: clipText(`Part of ${item.name}. ${part.about}`),
+          detail: clipText(`${item.name}. ${part.about}`),
           href: "#fields/" + part.id,
           text: [part.name, part.about, item.name, item.short, area.name, "part", "skill", "learn"].join(" "),
         });
       }
     }
-    for (const item of A.workshops) {
+    for (const raw of A.workshops) {
+      const item = workshop(raw.id);
       const activities = (item.activities || []).map((row) => row.name).join(" ");
       rows.push({
-        kind: "Workshop",
+        kind: t("search.kind.Workshop"),
         title: item.name,
         detail: clipText(item.summary),
         href: "#workshops/" + item.id,
-        text: ["workshop", item.name, item.summary, item.detail, item.kind, activities, sittingWords("workshop", item.id)].join(" "),
+        text: ["workshop", "atelier", item.name, item.summary, item.detail, item.kind, activities, sittingWords("workshop", item.id), raw.name].join(" "),
       });
     }
-    for (const item of A.projects) {
+    for (const raw of A.projects) {
+      const item = project(raw.id);
       const activities = (item.activities || []).map((row) => row.name).join(" ");
       rows.push({
-        kind: "Project",
+        kind: t("search.kind.Project"),
         title: item.name,
         detail: clipText(item.summary),
         href: "#projects/" + item.id,
-        text: ["project", item.name, item.summary, item.brief, item.place, activities, sittingWords("project", item.id)].join(" "),
+        text: ["project", "projet", item.name, item.summary, item.brief, item.place, activities, sittingWords("project", item.id), raw.name].join(" "),
       });
     }
     for (const item of allSessions()) {
@@ -4239,19 +4738,23 @@ function levelLabel(n) {
 
   function whoHTML() {
     const roles = [
-      ["student", "Student"],
-      ["mentor", "Mentor"],
-      ["director", "Director"],
+      ["student", t("role.student")],
+      ["mentor", t("role.mentor")],
+      ["director", t("role.director")],
     ];
-    const seg = `<div class="seg" role="group" aria-label="Account">${roles.map(([id, label]) =>
-      `<button type="button" data-action="set-role" data-role="${id}" aria-pressed="${state.role === id}">${label}</button>`
+    const langSeg = `<div class="seg lang-seg" role="group" aria-label="${esc(t("role.language"))}">
+      <button type="button" data-action="set-lang" data-lang="en" lang="en" aria-pressed="${state.lang !== "fr"}">EN</button>
+      <button type="button" data-action="set-lang" data-lang="fr" lang="fr" aria-pressed="${state.lang === "fr"}">FR</button>
+    </div>`;
+    const seg = `<div class="seg" role="group" aria-label="${esc(t("role.account"))}">${roles.map(([id, label]) =>
+      `<button type="button" data-action="set-role" data-role="${id}" aria-pressed="${state.role === id}">${esc(label)}</button>`
     ).join("")}</div>`;
     let extra = "";
     if (state.role === "mentor") {
       const options = ["ibarra", "adeyemi", "vogel"].map((id) =>
         `<option value="${id}" ${state.mentorId === id ? "selected" : ""}>${esc(person(id).name)}</option>`
       ).join("");
-      extra += `<label>Acting as<select name="mentorId">${options}</select></label>`;
+      extra += `<label>${esc(t("who.actingAs"))}<select name="mentorId">${options}</select></label>`;
     }
     if (state.role === "director") {
       extra += `<p class="who-name">${esc(person("ortega").name)}</p>`;
@@ -4259,23 +4762,43 @@ function levelLabel(n) {
     const students = A.students.map((item) =>
       `<option value="${item.id}" ${state.studentId === item.id ? "selected" : ""}>${esc(item.name)}</option>`
     ).join("");
-    const studentLabel = state.role === "student" ? "Viewing as" : "Student";
-    extra += `<label>${studentLabel}<select name="studentId">${students}</select></label>`;
-    return seg + extra;
+    const studentLabel = state.role === "student" ? t("who.viewingAs") : t("who.student");
+    extra += `<label>${esc(studentLabel)}<select name="studentId">${students}</select></label>`;
+    return langSeg + seg + extra;
+  }
+
+  function applyLang() {
+    const lang = state.lang === "fr" ? "fr" : "en";
+    document.documentElement.lang = lang;
+    const skip = document.querySelector(".skip");
+    if (skip) skip.textContent = t("skip");
+    const tag = document.querySelector(".brand em");
+    if (tag) tag.textContent = t("brand.tag");
+    const findLabel = document.querySelector("#find label");
+    if (findLabel) findLabel.textContent = t("search.label");
+    const findInput = document.getElementById("find-q");
+    if (findInput) findInput.placeholder = t("search.placeholder");
+    const foot = document.getElementById("foot-copy");
+    if (foot) foot.textContent = t("footer.copy");
+    const reset = document.querySelector("[data-action='reset']");
+    if (reset) reset.textContent = t("footer.reset");
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute("content", t("meta.description"));
   }
 
   function renderChrome() {
+    applyLang();
     const mark = primaryMark();
     const nav = document.getElementById("nav");
     if (nav) {
       const primary = [
-        ["#fields", "What you can learn", mark === "learn"],
-        ["#workshops", "Workshops", mark === "workshops"],
-        ["#projects", "Projects", mark === "projects"],
+        ["#fields", t("nav.learn"), mark === "learn"],
+        ["#workshops", t("nav.workshops"), mark === "workshops"],
+        ["#projects", t("nav.projects"), mark === "projects"],
       ];
       let side = "";
-      if (state.role !== "student") side += navLink("#plan", "Plan a sitting", mark === "plan");
-      const recordLabel = state.role === "student" ? "Your record" : "Record";
+      if (state.role !== "student") side += navLink("#plan", t("nav.plan"), mark === "plan");
+      const recordLabel = state.role === "student" ? t("nav.record") : t("nav.recordShort");
       side += navLink("#panel", recordLabel, mark === "record");
       nav.innerHTML = primary.map(([href, label, on]) => navLink(href, label, on)).join("")
         + `<span class="nav-side">${side}</span>`;
@@ -4288,7 +4811,7 @@ function levelLabel(n) {
   function healthHTML(problems) {
     const status = problems.length ? "fail" : "ok";
     const banner = problems.length
-      ? `<div class="banner" role="alert">The sample record failed a consistency check: ${esc(problems.join("; "))}.</div>`
+      ? `<div class="banner" role="alert">${esc(t("health.fail", { problems: problems.join("; ") }))}</div>`
       : "";
     return `${banner}<p id="health" class="vh" data-health="${status}">${esc(problems.join("; ") || "ok")}</p>`;
   }
@@ -4312,7 +4835,7 @@ function levelLabel(n) {
         }
       : null;
     renderChrome();
-    document.body.classList.toggle("has-assistant", state.role === "student" && state.route === "dashboard");
+    document.body.classList.toggle("has-assistant", assistantAllowed());
     const root = document.getElementById("app");
     root.innerHTML = healthHTML(health()) + page();
     fitAssistant();
@@ -4374,7 +4897,7 @@ function levelLabel(n) {
     if (!node) return;
     const action = node.dataset.action;
     if (action === "assistant-toggle" || action === "assistant-close") {
-      if (state.role !== "student") return;
+      if (!assistantAllowed()) return;
       assistantOpen = action === "assistant-toggle" ? !assistantOpen : false;
       render();
       const focusNode = assistantOpen ? document.getElementById("assistant") : document.querySelector(".assistant-head");
@@ -4433,9 +4956,10 @@ function levelLabel(n) {
       return;
     }
     if (action === "assistant-ask") {
-      const prompt = ASSISTANT_PROMPTS.find((item) => item.id === node.dataset.id);
+      const caseload = assistantUsesCaseload();
+      const prompt = (caseload ? CASELOAD_PROMPTS : ASSISTANT_PROMPTS).find((item) => item.id === node.dataset.id);
       if (!prompt) return;
-      askAssistant(prompt.label);
+      askAssistant(t((caseload ? "coach.prompt." : "prompt.") + prompt.id));
       return;
     }
     if (action === "assistant-clear") {
@@ -4469,6 +4993,14 @@ function levelLabel(n) {
       state.layer = state.layer === node.dataset.id ? "" : node.dataset.id;
       persist();
       render();
+      return;
+    }
+    if (action === "set-lang") {
+      const lang = node.dataset.lang === "fr" ? "fr" : "en";
+      if (state.lang === lang) return;
+      state.lang = lang;
+      persist();
+      render({ scroll: "top" });
       return;
     }
     if (action === "set-role") {
@@ -4868,7 +5400,7 @@ function levelLabel(n) {
       }
     }
     if (event.key !== "Enter" && event.key !== " ") return;
-    const node = event.target.closest(".network .node, .field-chart .field-dot");
+    const node = event.target.closest(".network .node, .field-chart .field-dot, .age-chart .age-dot");
     if (!node) return;
     event.preventDefault();
     node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
