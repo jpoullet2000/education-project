@@ -644,6 +644,17 @@ main {
 .workshop-plate .rule { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .workshop-plate .rule.faint { stroke: var(--line-strong); stroke-width: 1.15; }
 .workshop-plate .strike { stroke: var(--ink); stroke-width: 1.25; stroke-linecap: round; }
+.workshop-plate .water { fill: currentColor; opacity: 0.16; }
+.workshop-plate .ground { fill: currentColor; opacity: 0.08; }
+.project-hero {
+  max-width: 40rem;
+  margin: 0 0 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #f7f3eb;
+}
+.project-hero .workshop-plate { border-bottom: 0; }
 
 .field-philosophy { --c: var(--c-philosophy); }
 .field-mathematics { --c: var(--c-mathematics); }

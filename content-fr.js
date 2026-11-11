@@ -553,6 +553,33 @@
         d1: "Votre affirmation", d2: "Un pair", d3: "La nouvelle page",
         caption: "La révision répond à la question.",
       },
+      coastal: {
+        title: "La traversée côtière. Le sud inonde d’abord. Un budget. Qui reste mouillé.",
+        s1: "Le sud inonde", d1: "Logements locatifs",
+        s2: "Le nord reste sec", d2: "Cliniques · marché",
+        caption: "Un budget. Qui reste mouillé.",
+      },
+      "model-world": {
+        title: "Le modèle et le monde. Un pendule, un seau percé, ou une tasse qui refroidit. Prédire, puis mesurer.",
+        s1: "Pendule", d1: "Le balancement",
+        s2: "Seau percé", d2: "La perte",
+        s3: "Tasse tiède", d3: "La chute",
+        caption: "Nommez ce qui retirerait le modèle.",
+      },
+      measure: {
+        title: "Mesurer ce qui compte. Un indice public classe les quartiers et déplace l’argent. Écrivez qui il ne voit pas.",
+        s1: "A", s2: "B", s3: "C", s4: "D",
+        index: "L’indice de vitalité",
+        rank: "Quartiers, classés",
+        who: "Qui il rate",
+        caption: "Un nombre tranchant n’est pas encore une justification.",
+      },
+      light: {
+        title: "Lumière, preuve et croyance. Un rayon traverse une frontière. Prédire, mesurer, et écrire ce que la différence autorise.",
+        s1: "Air", s2: "Verre",
+        d1: "Prédit", d2: "Mesuré",
+        caption: "Ce que la différence vous autorise à croire.",
+      },
     },
   };
 })();

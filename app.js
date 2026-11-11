@@ -1134,6 +1134,14 @@
     expect(workshopPlate(workshop("sampler")).includes("No mark") && workshopPlate(workshop("sampler")).includes("Tide table"), "sampler plate empty");
     expect(workshopPlate(workshop("media")).includes("Reconstruction is the mark") && workshopPlate(workshop("media")).includes("Spring"), "medium plate");
     expect(workshopPlate(workshop("argument")).includes("Revision") && workshopPlate(workshop("argument")).includes("Safer road"), "argument plate");
+    for (const item of A.projects) {
+      const plate = projectPlate(item);
+      expect(plate.includes(`id="plate-${item.id}"`) && plate.includes("<svg"), "project plate " + item.id);
+    }
+    expect(projectPlate(project("coastal")).includes("Who still gets wet"), "coastal plate");
+    expect(projectPlate(project("model-world")).includes("Pendulum"), "model plate");
+    expect(projectPlate(project("measure")).includes("Who it misses"), "measure plate");
+    expect(projectPlate(project("light")).includes("Predicted"), "light plate");
     expect(offerPoints(project("coastal").elicits) === 44, "coastal points");
     expect(evidencePoints(byId(A.evidence, "ev-amina-diag")) === 9, "amina diagnostic points");
     for (const personRecord of A.students) {
@@ -1805,7 +1813,9 @@
     const viewer = current();
     const next = nextSitting("project", item.id);
     const when = next ? `${formatDate(next.date)}, ${next.start}–${next.end}, ${next.place}. ${placesOpen(next)}` : "None on the plan";
-    return `<article class="card">
+    return `<article class="card workshop-card">
+      ${projectPlate(item)}
+      <div class="workshop-copy">
       <p class="eyebrow">${esc(item.place)}</p>
       <h3><a href="#projects/${item.id}">${esc(item.name)}</a></h3>
       <p>${esc(item.summary)}</p>
@@ -1814,6 +1824,7 @@
       <p class="tags">${pips}</p>
       <p class="meta">On it: ${esc(names)}</p>
       <p class="meta">Next sitting: ${esc(when)}. <a href="#plan">See the days</a></p>
+      </div>
     </article>`;
   }
 
@@ -1833,6 +1844,7 @@
         <h2>${esc(item.name)}</h2>
         <p class="lede">${esc(item.brief)}</p>
       </header>
+      <div class="project-hero">${projectPlate(item)}</div>
       <p class="meta">${esc(item.place)}</p>
       <p class="point-offer"><b>${esc(offerPhrase(item.elicits))}</b> <span>across ${item.elicits.length} skills</span></p>
       ${overlapNote(item) ? `<p class="meta">${esc(overlapNote(item))}</p>` : ""}
@@ -2472,6 +2484,102 @@
         ${stamp(220, "philosophy", "02", plateText("argument", "s2", "Who walks"), plateText("argument", "d2", "A peer"), iconQuestion)}
         ${stamp(366, "english", "03", plateText("argument", "s3", "Revision"), plateText("argument", "d3", "The new page"), iconRevision)}
         ${caption(plateText("argument", "caption", "The revision answers the question."), 172)}
+      `)}</figure>`;
+    }
+    return "";
+  }
+
+  function projectPlate(item) {
+    if (!item) return "";
+    const caption = (text, y) => `<text class="soft" text-anchor="middle" x="220" y="${y}" font-size="12">${esc(text)}</text>`;
+    const house = (x, y, tone, w) => `<g class="${tone}" transform="translate(${x} ${y})">
+      <rect class="sheet" x="0" y="7" width="${w}" height="${Math.round(w * 0.85)}" rx="1.2"/>
+      <path d="M-2.2 7 L${(w / 2).toFixed(1)} -5 L${(w + 2.2).toFixed(1)} 7 Z" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.3"/>
+    </g>`;
+    if (item.id === "coastal") {
+      return `<figure class="workshop-plate">${plateSvg("coastal", "0 0 440 186", plateText("coastal", "title", "Coastal Crossing. South floods first. One budget. Who still gets wet."), `
+        <g class="physics"><path class="water" d="M0 118 C70 128 120 108 190 122 C270 138 320 116 440 128 V186 H0 Z"/></g>
+        <g class="philosophy"><path class="ground" d="M0 108 C80 118 130 96 210 104 C300 114 360 78 440 86 V186 H0 Z"/></g>
+        ${house(36, 86, "english", 22)}
+        ${house(66, 92, "english", 18)}
+        ${house(92, 88, "philosophy", 20)}
+        ${house(292, 48, "math", 24)}
+        ${house(326, 54, "math", 20)}
+        ${house(356, 46, "philosophy", 22)}
+        <g class="physics">
+          <path class="walk" d="M48 118 C140 132 210 108 300 78"/>
+          <path d="M168 138 C176 132 190 136 198 142 C190 146 176 148 168 138 Z" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.35"/>
+        </g>
+        <text class="serif english" x="36" y="28" font-size="15">${esc(plateText("coastal", "s1", "South floods"))}</text>
+        <text class="soft" x="36" y="44" font-size="11">${esc(plateText("coastal", "d1", "Rental housing"))}</text>
+        <text class="serif math" x="292" y="28" font-size="15">${esc(plateText("coastal", "s2", "North stays dry"))}</text>
+        <text class="soft" x="292" y="44" font-size="11">${esc(plateText("coastal", "d2", "Clinics · market"))}</text>
+        ${caption(plateText("coastal", "caption", "One budget. Who still gets wet."), 176)}
+      `)}</figure>`;
+    }
+    if (item.id === "model-world") {
+      return `<figure class="workshop-plate">${plateSvg("model-world", "0 0 440 186", plateText("model-world", "title", "The Model and the World. A pendulum, a leaky bucket, or a cooling cup. Predict, then measure."), `
+        <g class="physics" transform="translate(74 78)">
+          <circle class="disc" r="28"/>
+          <path d="M0 -22 V8"/>
+          <circle cx="0" cy="14" r="6" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.4"/>
+          <text class="serif" text-anchor="middle" y="52" font-size="15">${esc(plateText("model-world", "s1", "Pendulum"))}</text>
+          <text class="soft" text-anchor="middle" y="68" font-size="11">${esc(plateText("model-world", "d1", "The swing"))}</text>
+        </g>
+        <g class="math" transform="translate(220 78)">
+          <circle class="disc" r="28"/>
+          <path d="M-10 -8 L-7 12 H7 L10 -8 Z" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M0 12 V20 M-3 16 H3"/>
+          <text class="serif" text-anchor="middle" y="52" font-size="15">${esc(plateText("model-world", "s2", "Leaky bucket"))}</text>
+          <text class="soft" text-anchor="middle" y="68" font-size="11">${esc(plateText("model-world", "d2", "The loss"))}</text>
+        </g>
+        <g class="philosophy" transform="translate(366 78)">
+          <circle class="disc" r="28"/>
+          <path d="M-9 4 H9 V12 H-9 Z" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.35"/>
+          <path d="M-7 4 C-7 -6 7 -6 7 4"/>
+          <path class="wave" d="M-4 -10 C-2 -16 2 -8 4 -14"/>
+          <text class="serif" text-anchor="middle" y="52" font-size="15">${esc(plateText("model-world", "s3", "Cooling cup"))}</text>
+          <text class="soft" text-anchor="middle" y="68" font-size="11">${esc(plateText("model-world", "d3", "The fade"))}</text>
+        </g>
+        ${caption(plateText("model-world", "caption", "Name what would retire the model."), 176)}
+      `)}</figure>`;
+    }
+    if (item.id === "measure") {
+      const bar = (x, h, tone, label) => `<g class="${tone}" transform="translate(${x} 118)">
+        <rect class="sheet" x="-14" y="${-h}" width="28" height="${h}" rx="2"/>
+        <text class="soft" text-anchor="middle" y="16" font-size="11">${esc(label)}</text>
+      </g>`;
+      return `<figure class="workshop-plate">${plateSvg("measure", "0 0 440 186", plateText("measure", "title", "Measuring What Matters. A public index ranks neighborhoods and moves money. Write who it cannot see."), `
+        ${bar(70, 36, "math", plateText("measure", "s1", "A"))}
+        ${bar(128, 64, "physics", plateText("measure", "s2", "B"))}
+        ${bar(186, 22, "english", plateText("measure", "s3", "C"))}
+        ${bar(244, 50, "philosophy", plateText("measure", "s4", "D"))}
+        <g class="english" transform="translate(352 78)">
+          <circle class="disc" r="26" stroke-dasharray="2.6 2.8"/>
+          <circle cx="0" cy="-7" r="5" fill="var(--paper-2)" stroke="currentColor" stroke-width="1.35"/>
+          <path d="M0 -1 V10 M-8 18 L0 10 L8 18"/>
+          <text class="serif" text-anchor="middle" y="48" font-size="15">${esc(plateText("measure", "who", "Who it misses"))}</text>
+        </g>
+        <text class="serif math" x="56" y="28" font-size="15">${esc(plateText("measure", "index", "The vitality index"))}</text>
+        <text class="soft" x="56" y="44" font-size="11">${esc(plateText("measure", "rank", "Neighborhoods, ranked"))}</text>
+        ${caption(plateText("measure", "caption", "A sharp number is not yet a justification."), 176)}
+      `)}</figure>`;
+    }
+    if (item.id === "light") {
+      return `<figure class="workshop-plate">${plateSvg("light", "0 0 440 186", plateText("light", "title", "Light, Proof, and Belief. A ray crosses a boundary. Predict, measure, and write what the difference warrants."), `
+        <g class="physics"><rect class="ground" x="220" y="18" width="220" height="140"/></g>
+        <g class="physics">
+          <path class="rule faint" d="M220 18 V158"/>
+          <path class="rule" d="M36 36 L220 92"/>
+          <path class="rule" d="M220 92 L392 148"/>
+          <path class="walk" d="M220 92 L398 118"/>
+          <circle cx="220" cy="92" r="3.2" fill="currentColor" stroke="none"/>
+        </g>
+        <text class="soft" x="48" y="28" font-size="11">${esc(plateText("light", "s1", "Air"))}</text>
+        <text class="soft" x="248" y="36" font-size="11">${esc(plateText("light", "s2", "Glass"))}</text>
+        <text class="serif physics" x="258" y="108" font-size="13">${esc(plateText("light", "d1", "Predicted"))}</text>
+        <text class="serif math" x="258" y="152" font-size="13">${esc(plateText("light", "d2", "Measured"))}</text>
+        ${caption(plateText("light", "caption", "What the difference entitles you to believe."), 176)}
       `)}</figure>`;
     }
     return "";
